@@ -1,0 +1,40 @@
+# 빌드 결과물 (다시 만들 수 있는 것)
+build/
+build.nosync/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+.ninja_*
+*.elf
+*.bin
+*.hex
+*.map
+*.o
+*.d
+*.su
+*.lst
+
+# CubeIDE · CubeMX 가 만드는 것
+Debug/
+Release/
+.settings/
+.mxproject
+*.launch
+
+# 편집기 · 맥 찌꺼기
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/tasks.json
+!.vscode/launch.json
+*.swp
+
+# 비밀값 (절대 올리면 안 되는 것) — 빈 값 예시는 secrets.example.h 로 올림
+secrets.h
+*.key
+.env
+
+# 측정 · 로그 파일
+*.ppk2
+*.sr
+*.log
