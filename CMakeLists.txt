@@ -39,6 +39,7 @@ set(HAL_SOURCES
 
 add_executable(${PROJECT_NAME}.elf
   Core/Src/main.c
+  Core/Src/meter.c
   Core/Src/log.c
   Core/Src/syscalls.c
   Core/Src/stm32h5xx_it.c
@@ -60,6 +61,7 @@ target_compile_options(${PROJECT_NAME}.elf PRIVATE
   $<$<CONFIG:Debug>:-Og -g3>
   $<$<CONFIG:Release>:-Os -g>
 )
+target_link_libraries(${PROJECT_NAME}.elf PRIVATE m)
 set(LDSCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/board/STM32H563ZGTX_FLASH.ld)
 target_link_options(${PROJECT_NAME}.elf PRIVATE
   -T${LDSCRIPT}
