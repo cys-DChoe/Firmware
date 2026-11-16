@@ -40,3 +40,8 @@ void RTC_IRQHandler(void)
 {
     HAL_RTCEx_WakeUpTimerIRQHandler(&g_rtc);
 }
+
+void EXTI13_IRQHandler(void)
+{
+    HAL_GPIO_EXTI_IRQHandler(BTN_PIN);
+}

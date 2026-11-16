@@ -60,6 +60,10 @@ add_executable(${PROJECT_NAME}.elf
   Core/Src/flash_spi_stm32.c
   Core/Src/lowpower.c
   Core/Src/lowpower_stm32.c
+  Core/Src/nvlog.c
+  Core/Src/persist.c
+  Core/Src/nv_w25q.c
+  Core/Src/app.c
   Core/Src/log.c
   Core/Src/syscalls.c
   Core/Src/stm32h5xx_it.c
@@ -87,6 +91,7 @@ target_link_options(${PROJECT_NAME}.elf PRIVATE
   -T${LDSCRIPT}
   -Wl,-Map=${PROJECT_NAME}.map,--cref
   -Wl,--print-memory-usage
+  -u _printf_float          # 로그에 누적량 · 영점 소수 찍기 (newlib-nano 는 기본으로 빠져 있음)
 )
 set_target_properties(${PROJECT_NAME}.elf PROPERTIES LINK_DEPENDS ${LDSCRIPT})
 

@@ -1,0 +1,12 @@
+/* LoRa 가입 키 — 이 파일을 secrets.h 로 복사해 값을 넣음. secrets.h 는 저장소에 안 올라감(.gitignore).
+ * 계량기마다 키가 다름: 망 서버(ChirpStack 등)에 기기를 등록할 때 받은 값.
+ * 한 번 넣고 켜면 외부 플래시 설정에 저장되므로, 그 뒤엔 secrets.h 가 없어도 됨. */
+#pragma once
+
+#include <stdint.h>
+
+#define SECRETS_HAVE_LORA_KEYS 1
+static const uint8_t SECRET_DEV_EUI[8] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+static const uint8_t SECRET_APP_EUI[8] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+static const uint8_t SECRET_APP_KEY[16] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};

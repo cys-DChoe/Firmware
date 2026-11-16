@@ -31,3 +31,23 @@ void *_sbrk(ptrdiff_t incr)
     heap_end += incr;
     return prev;
 }
+
+/* 소수 printf(-u _printf_float)가 abort 를 끌어와서 필요한 빈 함수들 — 실제로 불리면 멈춤 */
+void _exit(int status)
+{
+    (void)status;
+    while (1) {
+    }
+}
+
+int _kill(int pid, int sig)
+{
+    (void)pid;
+    (void)sig;
+    return -1;
+}
+
+int _getpid(void)
+{
+    return 1;
+}
