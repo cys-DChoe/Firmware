@@ -20,6 +20,18 @@ void HAL_UART_MspInit(UART_HandleTypeDef *huart)
         gpio.Speed = GPIO_SPEED_FREQ_LOW;
         gpio.Alternate = GPIO_AF7_USART3;
         HAL_GPIO_Init(DBG_TX_PORT, &gpio);
+    } else if (huart->Instance == LPUART1) {
+        /* LoRa: PB6 LPUART1_TX → RAK3172 UART2_RX · PB7 LPUART1_RX ← UART2_TX, AF8 (pins.h MODEM_RX · MODEM_TX) */
+        __HAL_RCC_LPUART1_CLK_ENABLE();
+        __HAL_RCC_GPIOB_CLK_ENABLE();
+
+        GPIO_InitTypeDef gpio = {0};
+        gpio.Pin = MODEM_RX_PIN | MODEM_TX_PIN;
+        gpio.Mode = GPIO_MODE_AF_PP;
+        gpio.Pull = GPIO_PULLUP;            /* 모듈이 꺼져 있을 때 받는 선이 떠서 잡음 글자가 들어오지 않게 */
+        gpio.Speed = GPIO_SPEED_FREQ_LOW;
+        gpio.Alternate = GPIO_AF8_LPUART1;
+        HAL_GPIO_Init(MODEM_RX_PORT, &gpio);
     }
 }
 
@@ -28,6 +40,10 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef *huart)
     if (huart->Instance == USART3) {
         __HAL_RCC_USART3_CLK_DISABLE();
         HAL_GPIO_DeInit(DBG_TX_PORT, DBG_TX_PIN | DBG_RX_PIN);
+    } else if (huart->Instance == LPUART1) {
+        HAL_NVIC_DisableIRQ(LPUART1_IRQn);
+        __HAL_RCC_LPUART1_CLK_DISABLE();
+        HAL_GPIO_DeInit(MODEM_RX_PORT, MODEM_RX_PIN | MODEM_TX_PIN);
     }
 }
 

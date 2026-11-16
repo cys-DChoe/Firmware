@@ -19,3 +19,7 @@ echo "\n== 센서 드라이버 (HSC · ABP2 · BMP390)"
 cc $CFLAGS -o "$OUT/test_sensors" Core/Src/hsc.c Core/Src/abp2.c Core/Src/bmp390.c Core/Src/sensors.c \
    Core/Src/i2c_timing.c tests/host/test_sensors.c -lm
 "$OUT/test_sensors"
+
+echo "\n== LoRa 모듈 AT (RAK3172 · RUI3)"
+cc $CFLAGS -o "$OUT/test_rak3172" Core/Src/rak3172.c tests/host/test_rak3172.c
+"$OUT/test_rak3172"

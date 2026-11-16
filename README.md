@@ -50,6 +50,19 @@ python3 tools/report_decode.py 0101020...   # 16진 문자열 하나 풀기
 
 정압 범위는 우리 견적(ABP2 6 kPa) 기준. 동인님 시트는 0–2.5 kPa 라 합의 뒤 `abp2_default_cfg()` · `meter_default_cfg()` 만 바꾸면 됨.
 
+## LoRa 모듈 (`Core/Src/rak3172.c` · `lora_uart_stm32.c`)
+
+RAK3172(RUI3 AT)를 LPUART1(PB6/PB7)로 부림. 명령은 짧게 주고받고(`rak_cmd`, 1 s 이내), 가입 · 송신 결과는 나중에 오는 `+EVT:` 줄을 주 루프의 `rak_poll()` 이 처리함. 그래서 가입(최대 8번 × 10 s) · 송신 끝을 기다리는 동안에도 1초 측정이 멈추지 않음.
+
+| 하는 일 | 함수 |
+|---|---|
+| 처음 한 번 설정 (LoRaWAN · OTAA · 대역 · 키 · LBT · 절전) — 지금 값과 다른 것만 씀 | `rak_configure` |
+| 가입 `AT+JOIN=1:0:10:8` → `+EVT:JOINED` | `rak_join_start` · `rak_poll` |
+| 1분 보고 `AT+SEND=포트:16진` → `+EVT:TX_DONE` | `rak_send_start` · `rak_poll` |
+| 리셋(PE2 낮음 2 ms) · 깨우기(`AT` 최대 3번) · 속도 저장 `AT+BAUD=` | `rak_hw_reset` · `rak_wake` · `rak_set_baud` |
+
+대역 기본은 국내 시험 KR920(`band = 7`, LBT 켬). 케냐 현장은 4(EU868) — 국내에서 868 MHz 로 쏘면 안 됨. 키(DevEUI · AppEUI · AppKey)는 `secrets.h` 에 두고 저장소에 안 올림. 깰 때 첫 글자를 잃는지 · 리셋 뒤 응답 시간 · LBT 시간 단위는 매뉴얼에 없어서 보드에서 확인.
+
 ## 처음 한 번
 
 ```bash

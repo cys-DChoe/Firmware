@@ -49,6 +49,8 @@ add_executable(${PROJECT_NAME}.elf
   Core/Src/sensors.c
   Core/Src/i2c_stm32.c
   Core/Src/i2c_timing.c
+  Core/Src/rak3172.c
+  Core/Src/lora_uart_stm32.c
   Core/Src/log.c
   Core/Src/syscalls.c
   Core/Src/stm32h5xx_it.c

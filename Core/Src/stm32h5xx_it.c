@@ -1,5 +1,6 @@
 /* 예외 · 인터럽트 처리 */
 #include "main.h"
+#include "lora_uart_stm32.h"
 
 void NMI_Handler(void)
 {
@@ -27,4 +28,9 @@ void PendSV_Handler(void) {}
 void SysTick_Handler(void)
 {
     HAL_IncTick();
+}
+
+void LPUART1_IRQHandler(void)
+{
+    lora_uart_irq(&g_lora_uart);
 }
