@@ -23,3 +23,7 @@ cc $CFLAGS -o "$OUT/test_sensors" Core/Src/hsc.c Core/Src/abp2.c Core/Src/bmp390
 echo "\n== LoRa 모듈 AT (RAK3172 · RUI3)"
 cc $CFLAGS -o "$OUT/test_rak3172" Core/Src/rak3172.c tests/host/test_rak3172.c
 "$OUT/test_rak3172"
+
+echo "\n== 외부 플래시 · 1분 기록 링 (W25Q128)"
+cc $CFLAGS -o "$OUT/test_ring" Core/Src/w25q.c Core/Src/ring.c tests/host/test_ring.c
+"$OUT/test_ring"

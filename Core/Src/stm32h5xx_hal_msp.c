@@ -85,3 +85,27 @@ void HAL_I2C_MspDeInit(I2C_HandleTypeDef *hi2c)
         HAL_GPIO_DeInit(I2C3_SDA_PORT, I2C3_SDA_PIN);
     }
 }
+
+void HAL_SPI_MspInit(SPI_HandleTypeDef *hspi)
+{
+    if (hspi->Instance == SPI1) {
+        /* 외부 플래시 W25Q128: PA5 SCK · PA6 MISO · PA7 MOSI, AF5 */
+        __HAL_RCC_SPI1_CLK_ENABLE();
+        __HAL_RCC_GPIOA_CLK_ENABLE();
+        GPIO_InitTypeDef gpio = {0};
+        gpio.Pin = SPI1_SCK_PIN | SPI1_MISO_PIN | SPI1_MOSI_PIN;
+        gpio.Mode = GPIO_MODE_AF_PP;
+        gpio.Pull = GPIO_NOPULL;
+        gpio.Speed = GPIO_SPEED_FREQ_MEDIUM;
+        gpio.Alternate = GPIO_AF5_SPI1;
+        HAL_GPIO_Init(SPI1_SCK_PORT, &gpio);
+    }
+}
+
+void HAL_SPI_MspDeInit(SPI_HandleTypeDef *hspi)
+{
+    if (hspi->Instance == SPI1) {
+        __HAL_RCC_SPI1_CLK_DISABLE();
+        HAL_GPIO_DeInit(SPI1_SCK_PORT, SPI1_SCK_PIN | SPI1_MISO_PIN | SPI1_MOSI_PIN);
+    }
+}
