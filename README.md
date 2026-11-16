@@ -28,6 +28,16 @@
 
 판정 문턱과 벤투리 치수는 문서의 제안값 · 예제 값이라 `meter_default_cfg()` 에 설정값으로 모여 있음.
 
+## 1분 보고 (`Core/Src/report.c`)
+
+LoRa 로 1분마다 보내는 24바이트(형식 v1). 바이트 배치 표는 `Core/Inc/report.h` 맨 위. 서버 쪽 풀기 참고 구현은 `tools/report_decode.py`:
+
+```bash
+python3 tools/report_decode.py 0101020...   # 16진 문자열 하나 풀기
+```
+
+`./tests/host/run.sh` 가 C 로 묶은 값을 이 파이썬으로 풀어 맞는지도 확인함. 자릿수는 서버 담당과 맞출 때 바꿀 수 있고, 바꾸면 형식 버전을 올림.
+
 ## 처음 한 번
 
 ```bash

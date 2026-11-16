@@ -74,6 +74,7 @@ typedef struct {
     double flow_nm3h;           /* 1분 평균 표준 유량 */
     bool flowing;               /* 이 분에 흐름(이벤트)이 있었나 */
     bool venting;               /* 방출 중인 분 */
+    bool depleted;              /* 이 분에 고갈 상태였음 (6절 판정이 선 동안) */
     bool out_of_range;          /* 차압 · 정압 만점 95 % 넘음 */
 } meter_minute_t;
 
@@ -138,7 +139,7 @@ typedef struct {
     /* 이 분 누적 */
     uint32_t minute_index;
     double m_s, m_dp, m_pg, m_t, m_patm, m_m3, m_nm3;
-    bool m_flowing, m_oor;
+    bool m_flowing, m_oor, m_depl;
 } meter_t;
 
 /* 계산식 문서 예제 값으로 채운 기본 설정 */

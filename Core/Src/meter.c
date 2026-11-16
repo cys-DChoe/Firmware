@@ -279,6 +279,9 @@ void meter_step(meter_t *m, const meter_sample_t *s, double dt)
     if (m->evt_active) {            /* 분 단위 '흐름 있음' = 사용 이벤트 중 (잡음으로 잠깐 튄 건 안 침) */
         m->m_flowing = true;
     }
+    if (m->depl_latched) {
+        m->m_depl = true;
+    }
     if (fabs(s->dp_raw_pa) > 0.95 * c->dp_full_scale_pa || s->pg_pa > 0.95 * c->pg_full_scale_pa) {
         m->m_oor = true;
     }
@@ -307,6 +310,7 @@ void meter_minute(meter_t *m, meter_minute_t *out)
     }
     r.flowing = m->m_flowing;
     r.out_of_range = m->m_oor;
+    r.depleted = m->m_depl;
 
     /* 6절: P_idle 용 — 흐름 없던 분의 정압만 */
     m->idle_pg[m->idle_head] = r.pg_mean_pa;
@@ -371,6 +375,7 @@ void meter_minute(meter_t *m, meter_minute_t *out)
     m->m_s = m->m_dp = m->m_pg = m->m_t = m->m_patm = m->m_m3 = m->m_nm3 = 0.0;
     m->m_flowing = m->evt_active;
     m->m_oor = false;
+    m->m_depl = m->depl_latched;
 
     if (out != NULL) {
         *out = r;

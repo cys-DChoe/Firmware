@@ -40,6 +40,7 @@ set(HAL_SOURCES
 add_executable(${PROJECT_NAME}.elf
   Core/Src/main.c
   Core/Src/meter.c
+  Core/Src/report.c
   Core/Src/log.c
   Core/Src/syscalls.c
   Core/Src/stm32h5xx_it.c
