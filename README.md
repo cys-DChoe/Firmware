@@ -38,6 +38,18 @@ python3 tools/report_decode.py 0101020...   # 16진 문자열 하나 풀기
 
 `./tests/host/run.sh` 가 C 로 묶은 값을 이 파이썬으로 풀어 맞는지도 확인함. 자릿수는 서버 담당과 맞출 때 바꿀 수 있고, 바꾸면 형식 버전을 올림.
 
+## 센서 드라이버 (`Core/Src/hsc.c` · `abp2.c` · `bmp390.c` · `sensors.c`)
+
+| 센서 | 버스 · 주소 | 하는 일 |
+|---|---|---|
+| HSC 차압 ±1000 Pa | I2C2 (PB10/PB12) 0x28 | 4바이트 읽기, 상태 2비트(10 = 이전 값) |
+| ABP2 정압 0–6 kPa | I2C3 (PA8/PC9) 0x28 | `AA 00 00` → 5 ms → 7바이트, busy 면 1 ms 씩 다시 |
+| BMP390 기압 · 온도 | I2C3 0x76 | 켤 때마다 다시 설정(OSR ×4/×1, IIR 끔), 강제 모드 한 번 재기, Bosch 실수 보정식 |
+
+드라이버는 `i2c_bus_t`(쓰기 · 읽기 · 레지스터 읽기 · 기다리기) 만 써서 맥에서 가짜 버스로 시험함. 보드 쪽 연결은 `i2c_stm32.c`(HAL, 100 kHz, 타이밍은 버스 클럭에서 계산). `sensors_read()` 가 셋을 읽어 `meter_sample_t` 로 묶고, 기압 센서가 실패하면 마지막 기압 · 정압 센서 온도로 대신함. BMP390 보정식은 Bosch BMP3_SensorAPI 로 낸 기준값 14개와 맞춤(차이 0.0001 Pa 미만).
+
+정압 범위는 우리 견적(ABP2 6 kPa) 기준. 동인님 시트는 0–2.5 kPa 라 합의 뒤 `abp2_default_cfg()` · `meter_default_cfg()` 만 바꾸면 됨.
+
 ## 처음 한 번
 
 ```bash

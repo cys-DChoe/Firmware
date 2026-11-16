@@ -28,6 +28,8 @@ set(HAL_SOURCES
   ${HAL}/Src/stm32h5xx_hal_flash.c
   ${HAL}/Src/stm32h5xx_hal_flash_ex.c
   ${HAL}/Src/stm32h5xx_hal_gpio.c
+  ${HAL}/Src/stm32h5xx_hal_i2c.c
+  ${HAL}/Src/stm32h5xx_hal_i2c_ex.c
   ${HAL}/Src/stm32h5xx_hal_icache.c
   ${HAL}/Src/stm32h5xx_hal_pwr.c
   ${HAL}/Src/stm32h5xx_hal_pwr_ex.c
@@ -41,6 +43,12 @@ add_executable(${PROJECT_NAME}.elf
   Core/Src/main.c
   Core/Src/meter.c
   Core/Src/report.c
+  Core/Src/hsc.c
+  Core/Src/abp2.c
+  Core/Src/bmp390.c
+  Core/Src/sensors.c
+  Core/Src/i2c_stm32.c
+  Core/Src/i2c_timing.c
   Core/Src/log.c
   Core/Src/syscalls.c
   Core/Src/stm32h5xx_it.c

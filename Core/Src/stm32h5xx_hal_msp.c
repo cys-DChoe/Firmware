@@ -30,3 +30,42 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef *huart)
         HAL_GPIO_DeInit(DBG_TX_PORT, DBG_TX_PIN | DBG_RX_PIN);
     }
 }
+
+void HAL_I2C_MspInit(I2C_HandleTypeDef *hi2c)
+{
+    /* 외부 풀업 4.7 kΩ 이 있어 내부 풀업은 안 씀. 오픈 드레인 · AF4. */
+    GPIO_InitTypeDef gpio = {0};
+    gpio.Mode = GPIO_MODE_AF_OD;
+    gpio.Pull = GPIO_NOPULL;
+    gpio.Speed = GPIO_SPEED_FREQ_LOW;
+    if (hi2c->Instance == I2C2) {
+        /* HSC 차압: PB10 SCL · PB12 SDA */
+        __HAL_RCC_I2C2_CLK_ENABLE();
+        __HAL_RCC_GPIOB_CLK_ENABLE();
+        gpio.Alternate = GPIO_AF4_I2C2;
+        gpio.Pin = I2C2_SCL_PIN | I2C2_SDA_PIN;
+        HAL_GPIO_Init(I2C2_SCL_PORT, &gpio);
+    } else if (hi2c->Instance == I2C3) {
+        /* ABP2 정압 · BMP390 기압: PA8 SCL · PC9 SDA */
+        __HAL_RCC_I2C3_CLK_ENABLE();
+        __HAL_RCC_GPIOA_CLK_ENABLE();
+        __HAL_RCC_GPIOC_CLK_ENABLE();
+        gpio.Alternate = GPIO_AF4_I2C3;
+        gpio.Pin = I2C3_SCL_PIN;
+        HAL_GPIO_Init(I2C3_SCL_PORT, &gpio);
+        gpio.Pin = I2C3_SDA_PIN;
+        HAL_GPIO_Init(I2C3_SDA_PORT, &gpio);
+    }
+}
+
+void HAL_I2C_MspDeInit(I2C_HandleTypeDef *hi2c)
+{
+    if (hi2c->Instance == I2C2) {
+        __HAL_RCC_I2C2_CLK_DISABLE();
+        HAL_GPIO_DeInit(I2C2_SCL_PORT, I2C2_SCL_PIN | I2C2_SDA_PIN);
+    } else if (hi2c->Instance == I2C3) {
+        __HAL_RCC_I2C3_CLK_DISABLE();
+        HAL_GPIO_DeInit(I2C3_SCL_PORT, I2C3_SCL_PIN);
+        HAL_GPIO_DeInit(I2C3_SDA_PORT, I2C3_SDA_PIN);
+    }
+}
