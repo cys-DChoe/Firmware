@@ -472,3 +472,35 @@ rak_err_t rak_set_baud(rak_t *r, uint32_t baud)
     snprintf(s, sizeof(s), "AT+BAUD=%lu", (unsigned long)baud);
     return rak_cmd(r, s, NULL, 0);
 }
+
+rak_err_t rak_ensure_baud(rak_t *r, uint32_t want, uint32_t old, bool *was_set)
+{
+    if (was_set != NULL) {
+        *was_set = false;
+    }
+    if (r->io.set_baud == NULL) {
+        return RAK_E_ARG;
+    }
+    r->io.set_baud(r->io.ctx, want);
+    if (rak_wake(r) == RAK_OK) {
+        return RAK_OK;                       /* 이미 맞춰져 있음 */
+    }
+    r->io.set_baud(r->io.ctx, old);
+    rak_err_t e = rak_wake(r);
+    if (e != RAK_OK) {
+        return e;                            /* 두 속도 다 응답 없음 */
+    }
+    e = rak_set_baud(r, want);
+    if (e != RAK_OK) {
+        return e;
+    }
+    if (was_set != NULL) {
+        *was_set = true;
+    }
+    r->io.set_baud(r->io.ctx, want);
+    if (rak_wake(r) == RAK_OK) {
+        return RAK_OK;
+    }
+    /* 저장만 되고 다시 켜야 바뀌는 경우 [매뉴얼에 없음 — 보드에서 확인] */
+    return rak_hw_reset(r);
+}

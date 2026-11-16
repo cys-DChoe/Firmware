@@ -77,6 +77,16 @@ RAK3172(RUI3 AT)를 LPUART1(PB6/PB7)로 부림. 명령은 짧게 주고받고(`r
 
 켤 때 `ring_mount()` 가 섹터마다 첫 기록만 읽어 이어 쓸 자리를 찾음. 쓰다 끊긴 칸은 CRC 가 안 맞아 건너뛰고, 지우다 끊긴 섹터는 다음 쓰기 때 다시 지움. 마지막 기록(`ring_last`)으로 누적량도 되살릴 수 있음. 못 보낸 기록은 `ring_find_unsent()` 로 최근 몇 칸 안에서 가장 오래된 것부터 찾음.
 
+## 잠 모드 (`Core/Src/lowpower.c` · `lowpower_stm32.c`)
+
+평소엔 Stop 으로 자고 RTC 깨우기 타이머(LSE ÷ 16 = 2048 Hz)로 깸: 흐름 있으면 1 s, 없으면 10 s (설계서 결정 ①). 자는 동안 LPUART1 을 LSE 9600 으로 돌려 LoRa 모듈 글자가 오면 바로 깸 (결정 ⑦, BRR 874 · 오차 −213 ppm). LSE 로는 115200 을 못 내서, 처음 켤 때 `rak_ensure_baud(9600, 115200)` 가 모듈 속도를 9600 으로 저장함. 시각은 RTC 달력 ↔ Unix 초.
+
+| 계산 부분 (맥 시험) | 보드 부분 |
+|---|---|
+| `lp_tick_ms` · `lp_wut_reload` · `lp_lpuart_brr` · 달력 ↔ Unix | `lp_init` (RTC · SVOS3 · 플래시 끔) · `lp_sleep_ms` · `lp_time_unix` |
+
+보드에서 확인할 것: RTC 깨우기 EXTI 선 번호(17번으로 둠, RM0481 표 확인) · LPUART1 이 Stop 에서 깨우는지 · 잠 전류. 디버거를 붙인 채로 잠을 보려면 `LP_DEBUG_STOP` 을 켜고 빌드.
+
 ## 처음 한 번
 
 ```bash

@@ -35,6 +35,8 @@ set(HAL_SOURCES
   ${HAL}/Src/stm32h5xx_hal_pwr_ex.c
   ${HAL}/Src/stm32h5xx_hal_rcc.c
   ${HAL}/Src/stm32h5xx_hal_rcc_ex.c
+  ${HAL}/Src/stm32h5xx_hal_rtc.c
+  ${HAL}/Src/stm32h5xx_hal_rtc_ex.c
   ${HAL}/Src/stm32h5xx_hal_spi.c
   ${HAL}/Src/stm32h5xx_hal_spi_ex.c
   ${HAL}/Src/stm32h5xx_hal_uart.c
@@ -56,6 +58,8 @@ add_executable(${PROJECT_NAME}.elf
   Core/Src/w25q.c
   Core/Src/ring.c
   Core/Src/flash_spi_stm32.c
+  Core/Src/lowpower.c
+  Core/Src/lowpower_stm32.c
   Core/Src/log.c
   Core/Src/syscalls.c
   Core/Src/stm32h5xx_it.c

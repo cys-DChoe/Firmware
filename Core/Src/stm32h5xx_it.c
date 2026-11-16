@@ -1,6 +1,7 @@
 /* 예외 · 인터럽트 처리 */
 #include "main.h"
 #include "lora_uart_stm32.h"
+#include "lowpower_stm32.h"
 
 void NMI_Handler(void)
 {
@@ -33,4 +34,9 @@ void SysTick_Handler(void)
 void LPUART1_IRQHandler(void)
 {
     lora_uart_irq(&g_lora_uart);
+}
+
+void RTC_IRQHandler(void)
+{
+    HAL_RTCEx_WakeUpTimerIRQHandler(&g_rtc);
 }

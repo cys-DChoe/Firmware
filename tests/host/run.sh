@@ -27,3 +27,7 @@ cc $CFLAGS -o "$OUT/test_rak3172" Core/Src/rak3172.c tests/host/test_rak3172.c
 echo "\n== 외부 플래시 · 1분 기록 링 (W25Q128)"
 cc $CFLAGS -o "$OUT/test_ring" Core/Src/w25q.c Core/Src/ring.c tests/host/test_ring.c
 "$OUT/test_ring"
+
+echo "\n== 잠 모드 계산 (깨우기 타이머 · UART 속도 · 달력)"
+cc $CFLAGS -o "$OUT/test_lowpower" Core/Src/lowpower.c tests/host/test_lowpower.c
+"$OUT/test_lowpower"

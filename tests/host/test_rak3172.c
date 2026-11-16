@@ -33,6 +33,9 @@ typedef struct {
     int nkeys;
     bool echo, asleep, dead, joined;
     uint32_t awake_until;      /* LPM 켜짐: 이 시각이 지나면 잠 */
+    uint32_t mod_baud, mcu_baud, saved_baud;   /* 모듈 · MCU 속도, 저장된 값 */
+    bool baud_after_reset;     /* true: AT+BAUD 는 저장만, 리셋 뒤 바뀜 */
+    int baud_switches;
     int busy_left;
     const char *inject;        /* 다음 답의 값 줄과 OK 사이에 끼울 줄 */
     char log[64][RAK_LINE_MAX];   /* 받은 명령 */
@@ -99,8 +102,8 @@ static void fake_factory(fake_t *f)
 
 static void handle(fake_t *f, const char *cmd)
 {
-    if (f->dead) {
-        return;
+    if (f->dead || f->mod_baud != f->mcu_baud) {
+        return;                 /* 속도가 다르면 깨진 글자 → 답 없음 */
     }
     const bool lpm = strcmp(val_of(f, "AT+LPM"), "1") == 0;
     if (f->asleep || (lpm && f->clock > f->awake_until)) {
@@ -147,6 +150,10 @@ static void handle(fake_t *f, const char *cmd)
         status(f, "OK");
     } else if (strncmp(cmd, "AT+BAUD=", 8) == 0) {
         status(f, "OK");
+        f->saved_baud = (uint32_t)strtoul(cmd + 8, NULL, 10);
+        if (!f->baud_after_reset) {
+            f->mod_baud = f->saved_baud;
+        }
     } else if (eq) {
         char key[40];
         snprintf(key, sizeof(key), "%.*s", (int)(eq - cmd), cmd);
@@ -206,9 +213,19 @@ static void fk_rst(void *ctx, bool level)
         f->rst_low_ms = f->clock - f->rst_low_ms;
         f->resets++;
         f->asleep = false;
-        banner(f);
+        f->mod_baud = f->saved_baud;
+        if (f->mod_baud == f->mcu_baud) {
+            banner(f);
+        }
     }
     f->rst_level = level;
+}
+
+static void fk_set_baud(void *ctx, uint32_t baud)
+{
+    fake_t *f = ctx;
+    f->mcu_baud = baud;
+    f->baud_switches++;
 }
 
 static fake_t F;
@@ -217,7 +234,8 @@ static rak_t R;
 static void fresh(void)
 {
     fake_factory(&F);
-    rak_io_t io = {fk_write, fk_getc, fk_ms, fk_delay, fk_rst, &F};
+    F.mod_baud = F.mcu_baud = F.saved_baud = 115200;
+    rak_io_t io = {fk_write, fk_getc, fk_ms, fk_delay, fk_rst, &F, fk_set_baud};
     rak_init(&R, &io);
 }
 
@@ -406,6 +424,36 @@ static void test_reset_baud(void)
     ok("세 번 다 답 없으면 시간 초과", rak_cmd(&R, "AT+BAND=?", v, sizeof(v)) == RAK_E_TIMEOUT);
 }
 
+static void test_baud(void)
+{
+    printf("속도 맞추기 (잠 중 받기용 9600, 공장값 115200)\n");
+    fresh();
+    bool set = false;
+    ok("공장값 모듈 → 9600 으로 바꿈", rak_ensure_baud(&R, 9600, 115200, &set) == RAK_OK && set);
+    ok("모듈 · MCU 둘 다 9600", F.mod_baud == 9600 && F.mcu_baud == 9600 && F.saved_baud == 9600);
+    ok("보낸 명령에 AT+BAUD=9600", count_writes("AT+BAUD=9600") == 1);
+    char v[8];
+    ok("그 뒤 명령도 통함", rak_cmd(&R, "AT+BAND=?", v, sizeof(v)) == RAK_OK && strcmp(v, "4") == 0);
+
+    printf("이미 9600 인 모듈 (다시 켠 뒤)\n");
+    F.nlog = 0;
+    ok("바로 통함 · 설정 안 바꿈", rak_ensure_baud(&R, 9600, 115200, &set) == RAK_OK && !set && count_writes("AT+BAUD") == 0);
+
+    printf("저장만 되고 리셋해야 바뀌는 모듈\n");
+    fresh();
+    F.baud_after_reset = true;
+    ok("리셋까지 해서 9600 으로 통함", rak_ensure_baud(&R, 9600, 115200, &set) == RAK_OK && set && F.resets == 1 &&
+                                             F.mod_baud == 9600);
+
+    printf("어느 속도로도 답이 없을 때\n");
+    fresh();
+    F.dead = true;
+    ok("시간 초과로 알림", rak_ensure_baud(&R, 9600, 115200, &set) == RAK_E_TIMEOUT && !set);
+    rak_io_t io0 = {fk_write, fk_getc, fk_ms, fk_delay, fk_rst, &F, NULL};
+    rak_init(&R, &io0);
+    ok("속도 바꾸는 함수가 없으면 인자 오류", rak_ensure_baud(&R, 9600, 115200, &set) == RAK_E_ARG);
+}
+
 int main(void)
 {
     test_parse();
@@ -413,6 +461,7 @@ int main(void)
     test_configure();
     test_join_send();
     test_reset_baud();
+    test_baud();
     printf("\n%d / %d 통과\n", checks - fails, checks);
     return fails ? 1 : 0;
 }

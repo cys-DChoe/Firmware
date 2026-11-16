@@ -34,6 +34,13 @@ static void io_delay(void *ctx, uint32_t ms)
     HAL_Delay(ms);
 }
 
+static void io_set_baud(void *ctx, uint32_t baud)
+{
+    lora_uart_t *u = ctx;
+    HAL_UART_DeInit(&u->h);
+    (void)lora_uart_init(u, baud);
+}
+
 static void io_rst(void *ctx, bool level)
 {
     (void)ctx;
@@ -55,7 +62,16 @@ HAL_StatusTypeDef lora_uart_init(lora_uart_t *u, uint32_t baud)
 
     u->head = u->tail = 0;
     u->overruns = 0;
-    u->h.Instance = LPUART1;                  /* 커널 클럭은 리셋 기본값 PCLK3 */
+
+    /* 커널 클럭: 9600 이하는 LSE(Stop 중에도 받음, BRR 874 · 오차 −213 ppm), 그보다 빠르면 PCLK3 */
+    const bool lse = baud <= LORA_LSE_MAX_BAUD;
+    RCC_PeriphCLKInitTypeDef clk = {0};
+    clk.PeriphClockSelection = RCC_PERIPHCLK_LPUART1;
+    clk.Lpuart1ClockSelection = lse ? RCC_LPUART1CLKSOURCE_LSE : RCC_LPUART1CLKSOURCE_PCLK3;
+    if (HAL_RCCEx_PeriphCLKConfig(&clk) != HAL_OK) {
+        return HAL_ERROR;
+    }
+    u->h.Instance = LPUART1;
     u->h.Init.BaudRate = baud;
     u->h.Init.WordLength = UART_WORDLENGTH_8B;
     u->h.Init.StopBits = UART_STOPBITS_1;
@@ -69,6 +85,14 @@ HAL_StatusTypeDef lora_uart_init(lora_uart_t *u, uint32_t baud)
         return st;
     }
 
+    if (lse) {
+        /* Stop 중 글자가 들어오면 깨우기 (받기 레지스터 찼을 때) */
+        UART_WakeUpTypeDef wu = {0};
+        wu.WakeUpEvent = UART_WAKEUP_ON_READDATA_NONEMPTY;
+        HAL_UARTEx_StopModeWakeUpSourceConfig(&u->h, wu);
+        HAL_UARTEx_EnableStopMode(&u->h);
+    }
+
     /* 받기 인터럽트: HAL 의 받기 함수를 거치지 않고 한 글자씩 직접 고리 버퍼로 */
     SET_BIT(u->h.Instance->CR1, USART_CR1_RXNEIE_RXFNEIE);
     HAL_NVIC_SetPriority(LPUART1_IRQn, 5, 0);
@@ -80,6 +104,7 @@ HAL_StatusTypeDef lora_uart_init(lora_uart_t *u, uint32_t baud)
     u->io.delay_ms = io_delay;
     u->io.rst = io_rst;
     u->io.ctx = u;
+    u->io.set_baud = io_set_baud;
     return HAL_OK;
 }
 

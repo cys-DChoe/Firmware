@@ -42,6 +42,7 @@ typedef struct {
     void (*delay_ms)(void *ctx, uint32_t ms);
     void (*rst)(void *ctx, bool level);     /* false = 리셋 걸기(낮음), true = 풀기 */
     void *ctx;
+    void (*set_baud)(void *ctx, uint32_t baud);   /* MCU 쪽 UART 속도 바꾸기 (없으면 NULL) */
 } rak_io_t;
 
 typedef enum {
@@ -109,6 +110,10 @@ rak_err_t rak_configure(rak_t *r, const rak_cfg_t *c);   /* 다른 값만 씀 (�
 rak_err_t rak_join_start(rak_t *r);              /* AT+JOIN=1:0:10:8 */
 rak_err_t rak_send_start(rak_t *r, uint8_t port, const uint8_t *data, size_t len);
 rak_err_t rak_set_baud(rak_t *r, uint32_t baud);  /* 모듈에 저장됨 — 부른 뒤 MCU 쪽 속도도 바꿀 것 */
+/* 모듈과 want 속도로 말이 통하게 맞춤 (잠 중에도 받으려면 9600, 설계서 결정 ⑦):
+ *   want 로 "AT" → 되면 끝. 안 되면 old(공장값 115200)로 "AT" → AT+BAUD=want → MCU 도 want →
+ *   바로 안 통하면 리셋 뒤 다시 확인. *was_set 에 이번에 모듈 설정을 바꿨는지. */
+rak_err_t rak_ensure_baud(rak_t *r, uint32_t want, uint32_t old, bool *was_set);
 
 /* 아래는 맥 시험용으로 드러내 둠 */
 rak_err_t rak_parse_status(const char *line, bool *is_status);
