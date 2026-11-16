@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "lowpower.h"
 #include "rak3172.h"
 
 #define WAKE_TRIES        3
@@ -287,6 +288,15 @@ static rak_err_t cmd_raw(rak_t *r, const char *cmd, char *val, size_t val_len, u
         if (key_len > 0 && val != NULL && strncmp(line, cmd, key_len) == 0) {
             strncpy(val, line + key_len, val_len - 1);
             val[val_len - 1] = '\0';
+        } else if (key_len > 4 && val != NULL && val[0] == '\0' && strncmp(line, cmd + 3, key_len - 4) == 0 &&
+                   line[key_len - 4] == ':') {
+            /* 몇몇 질의는 "AT+" 없이 "LTIME: 04h36m00s on 11/27/2023" 처럼 답함 */
+            const char *v = line + key_len - 3;
+            while (*v == ' ') {
+                v++;
+            }
+            strncpy(val, v, val_len - 1);
+            val[val_len - 1] = '\0';
         }
         /* 그 밖의 줄(시작 문구 · 도움말)은 버림 */
     }
@@ -503,4 +513,40 @@ rak_err_t rak_ensure_baud(rak_t *r, uint32_t want, uint32_t old, bool *was_set)
     }
     /* 저장만 되고 다시 켜야 바뀌는 경우 [매뉴얼에 없음 — 보드에서 확인] */
     return rak_hw_reset(r);
+}
+
+/* "04h36m00s on 11/27/2023" (매뉴얼 예, UTC+0) → Unix 초. 날짜는 예처럼 월/일/연으로 읽고,
+ * 앞 수가 12 를 넘으면 일/월/연으로 봄. 연도가 2026–2099 가 아니면(아직 못 맞춘 시각) false. */
+bool rak_parse_ltime(const char *s, uint32_t *unix_s)
+{
+    unsigned h, m, sec, a, b, y;
+    if (sscanf(s, "%uh%um%us on %u/%u/%u", &h, &m, &sec, &a, &b, &y) != 6) {
+        return false;
+    }
+    unsigned mon = a, day = b;
+    if (a > 12u) {
+        mon = b;
+        day = a;
+    }
+    if (y < 2026u || y > 2099u || mon < 1u || mon > 12u || day < 1u || day > 31u || h > 23u || m > 59u || sec > 59u) {
+        return false;
+    }
+    const lp_civil_t c = {(uint16_t)y, (uint8_t)mon, (uint8_t)day, (uint8_t)h, (uint8_t)m, (uint8_t)sec};
+    *unix_s = lp_unix_from_civil(&c);
+    return true;
+}
+
+rak_err_t rak_time_request(rak_t *r, bool on)
+{
+    return rak_cmd(r, on ? "AT+TIMEREQ=1" : "AT+TIMEREQ=0", NULL, 0);
+}
+
+rak_err_t rak_get_time(rak_t *r, uint32_t *unix_s)
+{
+    char v[48];
+    const rak_err_t e = rak_cmd(r, "AT+LTIME=?", v, sizeof(v));
+    if (e != RAK_OK) {
+        return e;
+    }
+    return rak_parse_ltime(v, unix_s) ? RAK_OK : RAK_E_PARAM;
 }

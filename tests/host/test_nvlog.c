@@ -41,6 +41,95 @@ static bool same_ctr(const counter_t *a, const counter_t *b)
            a->events == b->events && a->unix_s == b->unix_s;
 }
 
+/* ---------- 가짜 내장 EDATA: 섹터 6 KB, 16비트 단위, 안 쓴 칸 읽으면 ECC 오류(NMI) 수를 셈, 덮어쓰기 감시 ---------- */
+#define ED_SIZE (4u * 0x1800u)
+static uint16_t ed_mem[ED_SIZE / 2];
+static bool ed_written[ED_SIZE / 2];
+static int ed_virgin_reads, ed_double_programs, ed_cut_after = -1;
+
+static int ed_rd(void *ctx, uint32_t a, uint8_t *b, size_t n)
+{
+    (void)ctx;
+    if ((a | n) & 1u) return -1;
+    for (size_t i = 0; i < n; i += 2) {
+        const uint32_t k = (a + (uint32_t)i) / 2u;
+        uint16_t v = ed_mem[k];
+        if (!ed_written[k]) {
+            ed_virgin_reads++;          /* 보드에선 NMI 한 번 */
+            v = 0xFFFF;
+        }
+        b[i] = (uint8_t)v;
+        b[i + 1] = (uint8_t)(v >> 8);
+    }
+    return 0;
+}
+
+static int ed_pg(void *ctx, uint32_t a, const uint8_t *b, size_t n)
+{
+    (void)ctx;
+    if ((a | n) & 1u) return -1;
+    for (size_t i = 0; i < n; i += 2) {
+        if (ed_cut_after == 0) {
+            return 0;                   /* 전원 끊김: 여기까지만 써짐 */
+        }
+        if (ed_cut_after > 0) ed_cut_after--;
+        const uint32_t k = (a + (uint32_t)i) / 2u;
+        if (ed_written[k]) ed_double_programs++;
+        ed_mem[k] = (uint16_t)(b[i] | b[i + 1] << 8);
+        ed_written[k] = true;
+    }
+    return 0;
+}
+
+static int ed_er(void *ctx, uint32_t a)
+{
+    (void)ctx;
+    if (a % 0x1800u) return -1;
+    for (uint32_t k = a / 2u; k < (a + 0x1800u) / 2u; k++) {
+        ed_mem[k] = 0xFFFF;
+        ed_written[k] = false;
+    }
+    return 0;
+}
+
+static void test_edata(void)
+{
+    printf("내장 EDATA 흉내 (섹터 6 KB · 96칸)\n");
+    static flash_ops_t E = {ed_rd, ed_pg, ed_er, 0x1800u, NULL};
+    nvlog_t s1, c1;
+    ed_virgin_reads = 0;
+    ok("빈 EDATA 열기", nvlog_mount(&s1, &E, 0) == NVLOG_OK && nvlog_mount(&c1, &E, 0x3000) == NVLOG_OK && s1.slots == 96);
+    printf("       (빈 칸 4섹터 열 때 ECC 오류 %d 번)\n", ed_virgin_reads);
+    ok("빈 칸은 머리 8 B(16비트 4개)만 읽음 → 384칸 × 4 = 1536 번", ed_virgin_reads == 4 * 96 * 4);
+    settings_t w, r;
+    settings_default(&w);
+    w.zero_pa = 1.25;
+    w.zero_set = true;
+    ok("설정 저장 · 읽기", settings_save(&s1, &w) == NVLOG_OK && settings_load(&s1, &r) == NVLOG_OK && r.zero_pa == 1.25);
+    counter_t x, c;
+    for (uint32_t i = 0; i < 300; i++) {
+        x = ctr(i);
+        counter_save(&c1, &x);
+    }
+    ok("계수 300번 (섹터 3번 넘김) 뒤 마지막 값", counter_load(&c1, &c) == NVLOG_OK && same_ctr(&c, &x));
+    ok("16비트 칸을 지우지 않고 두 번 쓴 적 없음", ed_double_programs == 0);
+    nvlog_t c2;
+    ed_virgin_reads = 0;
+    nvlog_mount(&c2, &E, 0x3000);
+    ok("다시 켜도 마지막 값", counter_load(&c2, &c) == NVLOG_OK && same_ctr(&c, &x));
+    ok("쓴 칸은 ECC 오류 없이 읽힘 (빈 칸 머리만 오류)", ed_virgin_reads <= 2 * 96 * 4);
+    ed_cut_after = 10;                  /* 64 B 칸 중 16비트 10개만 쓰고 끊김 */
+    counter_t y = ctr(999);
+    counter_save(&c2, &y);
+    ed_cut_after = -1;
+    nvlog_t c3;
+    nvlog_mount(&c3, &E, 0x3000);
+    ok("쓰다 끊긴 칸은 버리고 앞 값", counter_load(&c3, &c) == NVLOG_OK && same_ctr(&c, &x));
+    ok("이어서 저장 (덮어쓰기 없이 다음 칸)", counter_save(&c3, &y) == NVLOG_OK && counter_load(&c3, &c) == NVLOG_OK &&
+                                                 same_ctr(&c, &y) && ed_double_programs == 0);
+    ok("설정 자리는 그대로", settings_load(&s1, &r) == NVLOG_OK && r.zero_pa == 1.25);
+}
+
 int main(void)
 {
     chip_new();
@@ -71,13 +160,27 @@ int main(void)
     for (int i = 0; i < 16; i++) {
         w.app_key[i] = (uint8_t)(0x11 * i);
     }
+    w.batt_cal_mv = -23;
     ok("설정 저장", settings_save(&ls, &w) == NVLOG_OK);
     nvlog_t ls2;
     nvlog_mount(&ls2, &OPS, PERSIST_SETTINGS_BASE);
     settings_t r;
     ok("다시 켜서 읽은 값 = 저장한 값", settings_load(&ls2, &r) == NVLOG_OK && r.zero_pa == w.zero_pa &&
                                             r.vent_p_pa == w.vent_p_pa && r.band == 7 && r.zero_set && r.keys_set &&
-                                            memcmp(r.dev_eui, w.dev_eui, 8) == 0 && memcmp(r.app_key, w.app_key, 16) == 0);
+                                            memcmp(r.dev_eui, w.dev_eui, 8) == 0 && memcmp(r.app_key, w.app_key, 16) == 0 &&
+                                            r.batt_cal_mv == -23);
+    printf("옛 판(50 B, 배터리 보정 없음) 설정도 읽힘\n");
+    {
+        uint8_t old[50];
+        uint8_t full[52];
+        settings_pack(&w, full);
+        memcpy(old, full, 50);
+        nvlog_save(&ls2, old, 50);
+        settings_t o;
+        ok("보정값은 0 으로, 나머지는 그대로", settings_load(&ls2, &o) == NVLOG_OK && o.batt_cal_mv == 0 &&
+                                                    o.zero_pa == w.zero_pa && o.keys_set);
+        settings_save(&ls2, &w);
+    }
 
     printf("계수 1분마다 저장 — 섹터 넘김 (섹터당 64칸)\n");
     for (uint32_t i = 0; i < 150; i++) {
@@ -154,6 +257,7 @@ int main(void)
     ok("너무 긴 내용은 거부", nvlog_save(&lc5, b, NVLOG_MAX_DATA + 1) == NVLOG_E_ARG);
     ok("섹터 경계 아닌 자리는 거부", nvlog_mount(&lc5, &OPS, PERSIST_COUNTER_BASE + 64) == NVLOG_E_ARG);
 
+    test_edata();
     printf("\n%d / %d 통과\n", checks - fails, checks);
     return fails ? 1 : 0;
 }

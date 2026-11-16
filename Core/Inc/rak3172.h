@@ -115,6 +115,14 @@ rak_err_t rak_set_baud(rak_t *r, uint32_t baud);  /* 모듈에 저장됨 — 부
  *   바로 안 통하면 리셋 뒤 다시 확인. *was_set 에 이번에 모듈 설정을 바꿨는지. */
 rak_err_t rak_ensure_baud(rak_t *r, uint32_t want, uint32_t old, bool *was_set);
 
+/* 망 시각 (설계서: 시계 맞추기)
+ *   AT+TIMEREQ=1 → 다음 송신 때 망에 시각을 물음 (LoRaWAN DeviceTimeReq)
+ *   AT+LTIME=?   → "LTIME: 04h36m00s on 11/27/2023" (UTC+0, RUI3 매뉴얼 예)
+ * 맞추기 전 값의 모양은 매뉴얼에 없음 → 연도가 2026–2099 가 아니면 못 맞춘 것으로 봄 (RAK_E_PARAM). */
+rak_err_t rak_time_request(rak_t *r, bool on);
+rak_err_t rak_get_time(rak_t *r, uint32_t *unix_s);
+bool rak_parse_ltime(const char *s, uint32_t *unix_s);
+
 /* 아래는 맥 시험용으로 드러내 둠 */
 rak_err_t rak_parse_status(const char *line, bool *is_status);
 bool rak_parse_event(const char *line, rak_event_t *ev);

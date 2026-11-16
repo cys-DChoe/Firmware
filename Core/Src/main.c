@@ -1,5 +1,5 @@
 /* 가스 계량기 펌웨어 — 보드 전체를 잇는 곳 (설계서 "동작 흐름")
- *   켜기: 시계(LSE · RTC) → 센서(I2C2 · I2C3) → 외부 플래시(링 · 누적 · 설정) → 저장값 되살리기 → LoRa(9600 · 설정 · 가입)
+ *   켜기: 시계(LSE · RTC) → 센서(I2C2 · I2C3) → 외부 플래시(링) · 내장 EDATA(누적 · 설정 · 키) → 저장값 되살리기 → LoRa(9600 · 설정 · 가입)
  *   반복: app_step(재기 → 계산 → 1분마다 저장 · 보고) → 버튼 3초면 영점 → Stop 잠(1 s 또는 10 s)
  * 실제 흐름은 app.c 에 있고 맥에서 가짜 부품으로 통째로 시험함(tests/host/test_app.c). 여기는 부품 연결만.
  */
@@ -7,19 +7,21 @@
 #include <string.h>
 #include "main.h"
 #include "app.h"
+#include "batt_stm32.h"
 #include "flash_spi_stm32.h"
 #include "i2c_stm32.h"
 #include "log.h"
 #include "lora_uart_stm32.h"
 #include "lowpower.h"
 #include "lowpower_stm32.h"
+#include "nv_edata.h"
 #include "nv_w25q.h"
 #include "sensors.h"
 #if __has_include("secrets.h")
 #include "secrets.h"
 #endif
 
-#define FW_VERSION "0.2.0"
+#define FW_VERSION "0.3.0"
 #define BTN_HOLD_ZERO_MS  3000u      /* 버튼 3초 이상 → 영점 */
 
 static void gpio_init(void);
@@ -60,14 +62,15 @@ static uint32_t hw_now(void *ctx)
 static bool hw_time_valid(void *ctx)
 {
     (void)ctx;
-    /* RTC 는 켤 때 2000-01-01 부터 돎. 2026 년 이후면 누가 맞춘 것으로 봄 (LoRa 망 시각 맞추기는 다음 단계) */
+    /* RTC 는 처음 켤 때 2000-01-01 부터 돎. 2026 년 이후면 망 시각으로 맞춘 것 (리셋해도 RTC 는 이어 감) */
     return lp_time_unix() >= 1767225600u;
 }
 
 static uint16_t hw_batt(void *ctx)
 {
     (void)ctx;
-    return 0;    /* 셀 전압(PA0 ADC)은 보드에서 보정과 함께 붙임 — 0 = 아직 못 잼 */
+    /* 1분 보고 직전 = LoRa 송신 전 쉬는 상태에서 잼 (펌웨어 주의 7번) */
+    return batt_measure_mv(s_app.settings.batt_cal_mv);
 }
 
 static void hw_flash(void *ctx, bool on)
@@ -86,7 +89,13 @@ static void hw_log(void *ctx, const char *m)
     printf("%s\n", m);
 }
 
-static const app_hw_t HW = {hw_read, hw_now, hw_time_valid, hw_batt, hw_flash, hw_log, NULL};
+static bool hw_set_time(void *ctx, uint32_t t)
+{
+    (void)ctx;
+    return lp_set_time_unix(t) == HAL_OK;
+}
+
+static const app_hw_t HW = {hw_read, hw_now, hw_time_valid, hw_batt, hw_flash, hw_log, NULL, hw_set_time};
 
 /* 버튼을 누르고 있는 동안 기다려 3초 넘으면 영점 */
 static void button_check(void)
@@ -149,9 +158,19 @@ int main(void)
     if (fe != W25Q_OK || ring_mount(&s_ring, &s_flash.dev, RING_DEFAULT_BASE, RING_DEFAULT_SECTORS) != RING_OK) {
         Error_Handler();
     }
-    nv_w25q_ops(&s_nv_ops, &s_flash.dev);
-    if (nvlog_mount(&s_nv_set, &s_nv_ops, PERSIST_SETTINGS_BASE) != NVLOG_OK ||
-        nvlog_mount(&s_nv_ctr, &s_nv_ops, PERSIST_COUNTER_BASE) != NVLOG_OK) {
+    /* 누적 · 설정 · 키: MCU 내장 고내구 데이터 플래시(EDATA, 은행 1 섹터 124–127). 처음 켤 땐 옵션 바이트로 EDATA 를 켬.
+     * 안 되면 외부 플래시 위 4 MB 로 대신함 (로그로 알림) */
+    uint32_t set_base = NV_EDATA_SETTINGS_BASE, ctr_base = NV_EDATA_COUNTER_BASE;
+    if (nv_edata_init() == NV_EDATA_READY) {
+        nv_edata_ops(&s_nv_ops);
+        printf("저장: 내장 EDATA\n");
+    } else {
+        nv_w25q_ops(&s_nv_ops, &s_flash.dev);
+        set_base = PERSIST_SETTINGS_BASE;
+        ctr_base = PERSIST_COUNTER_BASE;
+        printf("저장: EDATA 실패 → 외부 플래시\n");
+    }
+    if (nvlog_mount(&s_nv_set, &s_nv_ops, set_base) != NVLOG_OK || nvlog_mount(&s_nv_ctr, &s_nv_ops, ctr_base) != NVLOG_OK) {
         Error_Handler();
     }
     printf("링: 다음 순번 %lu\n", (unsigned long)s_ring.next_seq);

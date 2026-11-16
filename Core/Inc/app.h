@@ -8,6 +8,8 @@
  *   3) 1분이 넘었으면: 1분 요약 → 24 B 보고 → 링에 저장 → 누적량 저장 → 바로 보냄
  *   4) 보낼 게 없으면 최근 60분 안의 못 보낸 기록을 하나 다시 보냄 (20 s 에 한 번)
  *   5) 가입 안 돼 있으면 10분마다 다시 가입
+ *   6) 시계: 가입하면 망에 시각을 물어(AT+TIMEREQ=1) 송신이 끝날 때마다 AT+LTIME 을 읽고,
+ *      맞는 시각이 오면 RTC 를 고친 뒤 하루 동안 쉼. 시계가 뛰면 적산 · 분 경계도 같이 옮김
  *   → 다음에 깰 때까지 ms (흐름 있으면 1 s, 없으면 10 s)
  */
 #pragma once
@@ -28,6 +30,9 @@
 #define APP_ZERO_SAMPLES     16u     /* 영점 = 최근 16번 읽은 차압 평균 */
 #define APP_LORA_BAUD        9600u   /* 잠 중에도 받는 속도 (설계서 결정 ⑦) */
 #define APP_LORA_BAUD_OLD    115200u /* 모듈 공장값 */
+#define APP_TIMESYNC_S       86400u  /* 하루에 한 번 망 시각으로 다시 맞춤 */
+#define APP_TIME_STEP_S      2       /* 이만큼 넘게 어긋나면 RTC 를 고침 */
+#define APP_MAX_DT_S         60u     /* 한 번에 적산하는 최대 간격 (시계가 뛰었을 때 막음) */
 
 typedef struct {
     bool (*read)(void *ctx, meter_sample_t *s);   /* 센서 읽기, 믿을 만하면 true */
@@ -37,6 +42,7 @@ typedef struct {
     void (*flash_power)(void *ctx, bool on);       /* 외부 플래시 깨우기 · 재우기 (없으면 NULL) */
     void (*log)(void *ctx, const char *msg);       /* 없으면 NULL */
     void *ctx;
+    bool (*set_time)(void *ctx, uint32_t unix_s);  /* RTC 맞추기 (없으면 NULL — 시계 맞추기 안 함) */
 } app_hw_t;
 
 typedef struct {
@@ -57,6 +63,10 @@ typedef struct {
     bool tx_live;               /* 모듈이 보내는 중인 기록 */
     uint32_t tx_seq;
     uint32_t next_join_s, next_resend_s;
+    bool timereq_on;            /* 모듈에 시각 요청을 켜 둠 */
+    bool time_synced;           /* 이번 켜짐 뒤 망 시각으로 맞춘 적 있음 */
+    uint32_t next_timesync_s;
+    uint32_t time_syncs;
     double dp_hist[APP_ZERO_SAMPLES];
     uint16_t dp_n, dp_head;
     /* 셈 (로그 · 시험용) */

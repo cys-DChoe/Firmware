@@ -53,9 +53,9 @@ static void fake_factory(fake_t *f)
     memset(f, 0, sizeof(*f));
     f->rst_level = true;
     static const char *K[] = {"AT+NWM", "AT+NJM", "AT+BAND", "AT+DEVEUI", "AT+APPEUI", "AT+APPKEY", "AT+CFM",
-                              "AT+ADR", "AT+LBT", "AT+LBTRSSI", "AT+LBTSCANTIME", "AT+LPMLVL", "AT+LPM", "AT+NJS"};
+                              "AT+ADR", "AT+LBT", "AT+LBTRSSI", "AT+LBTSCANTIME", "AT+LPMLVL", "AT+LPM", "AT+NJS", "AT+TIMEREQ"};
     static const char *V[] = {"1", "1", "4", "AC1F09FFFE000000", "0000000000000000",
-                              "00000000000000000000000000000000", "0", "1", "0", "-80", "5", "1", "0", "0"};
+                              "00000000000000000000000000000000", "0", "1", "0", "-80", "5", "1", "0", "0", "0"};
     for (size_t i = 0; i < sizeof(K) / sizeof(K[0]); i++) {
         set_key(f, K[i], V[i]);
     }
@@ -81,6 +81,11 @@ static void handle(fake_t *f, const char *cmd)
     }
     const char *eq = strchr(cmd, '=');
     if (strcmp(cmd, "AT") == 0) {
+        status(f, "OK");
+    } else if (strcmp(cmd, "AT+LTIME=?") == 0) {
+        /* 매뉴얼 예 그대로: 값 줄 앞에 "AT+" 가 없음 */
+        pushf(f, "\r\nLTIME: ", f->ltime[0] ? f->ltime : "00h00m00s on 01/01/2000");
+        push(f, "\r\n");
         status(f, "OK");
     } else if (eq && strcmp(eq, "=?") == 0) {
         char key[40];

@@ -109,3 +109,24 @@ void HAL_SPI_MspDeInit(SPI_HandleTypeDef *hspi)
         HAL_GPIO_DeInit(SPI1_SCK_PORT, SPI1_SCK_PIN | SPI1_MISO_PIN | SPI1_MOSI_PIN);
     }
 }
+
+void HAL_ADC_MspInit(ADC_HandleTypeDef *hadc)
+{
+    if (hadc->Instance == ADC1) {
+        /* 셀 전압: PA0 아날로그 (pins.h VBAT_ADC), 커널 클럭 HCLK (리셋 기본) */
+        __HAL_RCC_ADC_CLK_ENABLE();
+        __HAL_RCC_GPIOA_CLK_ENABLE();
+        GPIO_InitTypeDef gpio = {0};
+        gpio.Pin = VBAT_ADC_PIN;
+        gpio.Mode = GPIO_MODE_ANALOG;
+        gpio.Pull = GPIO_NOPULL;
+        HAL_GPIO_Init(VBAT_ADC_PORT, &gpio);
+    }
+}
+
+void HAL_ADC_MspDeInit(ADC_HandleTypeDef *hadc)
+{
+    if (hadc->Instance == ADC1) {
+        __HAL_RCC_ADC_CLK_DISABLE();
+    }
+}

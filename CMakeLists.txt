@@ -21,6 +21,8 @@ set(HAL ${TP}/stm32h5xx-hal-driver)
 # 쓰는 HAL 모듈만 컴파일 (Core/Inc/stm32h5xx_hal_conf.h 에서 켠 것과 맞춤)
 set(HAL_SOURCES
   ${HAL}/Src/stm32h5xx_hal.c
+  ${HAL}/Src/stm32h5xx_hal_adc.c
+  ${HAL}/Src/stm32h5xx_hal_adc_ex.c
   ${HAL}/Src/stm32h5xx_hal_cortex.c
   ${HAL}/Src/stm32h5xx_hal_dma.c
   ${HAL}/Src/stm32h5xx_hal_dma_ex.c
@@ -63,7 +65,10 @@ add_executable(${PROJECT_NAME}.elf
   Core/Src/nvlog.c
   Core/Src/persist.c
   Core/Src/nv_w25q.c
+  Core/Src/nv_edata.c
   Core/Src/app.c
+  Core/Src/batt.c
+  Core/Src/batt_stm32.c
   Core/Src/log.c
   Core/Src/syscalls.c
   Core/Src/stm32h5xx_it.c

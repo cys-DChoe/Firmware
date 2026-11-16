@@ -224,6 +224,23 @@ static void test_baud(void)
     ok("속도 바꾸는 함수가 없으면 인자 오류", rak_ensure_baud(&R, 9600, 115200, &set) == RAK_E_ARG);
 }
 
+static void test_time(void)
+{
+    printf("망 시각 (AT+TIMEREQ · AT+LTIME)\n");
+    uint32_t t = 0;
+    ok("매뉴얼 예 \"04h36m00s on 11/27/2023\" 은 연도 2023 → 못 맞춘 것으로 봄",
+       !rak_parse_ltime("04h36m00s on 11/27/2023", &t));
+    ok("\"09h00m05s on 11/16/2026\" → 1794819605", rak_parse_ltime("09h00m05s on 11/16/2026", &t) && t == 1794819605u);
+    ok("일/월 순서여도(16/11) 읽음", rak_parse_ltime("09h00m05s on 16/11/2026", &t) && t == 1794819605u);
+    ok("표 모양(연도 없음)은 거부", !rak_parse_ltime("09h00m05s16-11", &t));
+    ok("시 25 는 거부", !rak_parse_ltime("25h00m00s on 11/16/2026", &t));
+    fresh();
+    ok("시각 요청 켜기 → AT+TIMEREQ=1", rak_time_request(&R, true) == RAK_OK && strcmp(val_of(&F, "AT+TIMEREQ"), "1") == 0);
+    ok("아직 못 맞춘 모듈 → 오류", rak_get_time(&R, &t) == RAK_E_PARAM);
+    snprintf(F.ltime, sizeof(F.ltime), "%s", "09h12m34s on 11/16/2026");
+    ok("맞춘 뒤 \"LTIME: 09h12m34s on 11/16/2026\" → Unix 초", rak_get_time(&R, &t) == RAK_OK && t == 1794820354u);
+}
+
 int main(void)
 {
     test_parse();
@@ -232,6 +249,7 @@ int main(void)
     test_join_send();
     test_reset_baud();
     test_baud();
+    test_time();
     printf("\n%d / %d 통과\n", checks - fails, checks);
     return fails ? 1 : 0;
 }

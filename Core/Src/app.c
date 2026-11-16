@@ -189,6 +189,39 @@ static bool send_seq(app_t *a, uint32_t seq, bool resend)
     return true;
 }
 
+/* 망 시각으로 RTC 맞추기. 맞추면 true (그때 now 가 바뀜) */
+static void time_sync(app_t *a, uint32_t now)
+{
+    if (a->hw.set_time == NULL || (a->time_synced && (int32_t)(now - a->next_timesync_s) < 0)) {
+        return;
+    }
+    if (!a->timereq_on) {
+        if (rak_time_request(a->rak, true) == RAK_OK) {
+            a->timereq_on = true;           /* 다음 송신에 실려 나감 */
+        }
+        return;
+    }
+    uint32_t t;
+    if (rak_get_time(a->rak, &t) != RAK_OK) {
+        return;                             /* 아직 답이 안 옴 — 다음 송신 뒤 다시 */
+    }
+    const int32_t diff = (int32_t)(t - now);
+    if ((diff > APP_TIME_STEP_S || diff < -APP_TIME_STEP_S) && a->hw.set_time(a->hw.ctx, t)) {
+        /* 시계가 뛴 만큼 기준도 옮겨서 큰 간격을 적산하지 않게 */
+        a->last_s += (uint32_t)diff;
+        a->last_minute = t / 60u;
+        char m[48];
+        snprintf(m, sizeof(m), "시계 맞춤: %ld 초", (long)diff);
+        say(a, m);
+    }
+    a->time_synced = true;
+    a->time_syncs++;
+    a->next_timesync_s = t + APP_TIMESYNC_S;
+    if (rak_time_request(a->rak, false) == RAK_OK) {
+        a->timereq_on = false;              /* 매 송신마다 물어 보지 않게 */
+    }
+}
+
 static void lora_work(app_t *a, uint32_t now)
 {
     if (a->rak == NULL || !a->lora_ready) {
@@ -204,6 +237,7 @@ static void lora_work(app_t *a, uint32_t now)
             ring_mark_sent(a->ring, a->tx_seq);
             flash_on(a, false);
             a->sent++;
+            time_sync(a, now);
         } else {
             a->send_fail++;          /* 링에 "안 보냄"으로 남아 나중에 다시 보냄 */
         }
@@ -215,6 +249,9 @@ static void lora_work(app_t *a, uint32_t now)
             a->next_join_s = now + APP_JOIN_RETRY_S;
         }
         return;
+    }
+    if (!a->timereq_on && !a->time_synced && a->hw.set_time != NULL) {
+        time_sync(a, now);                  /* 가입 직후 첫 송신부터 시각을 물음 */
     }
     if (a->tx_live || a->rak->tx_pending) {
         return;
@@ -245,8 +282,13 @@ uint32_t app_step(app_t *a)
         a->last_s = now;
         a->last_minute = now / 60u;     /* 첫 분은 반쪽이라 다음 분 경계부터 보고 */
     }
-    const uint32_t dt = now - a->last_s;
+    uint32_t dt = now - a->last_s;
     a->last_s = now;
+    if ((int32_t)dt < 0) {
+        dt = 0;                             /* 시계가 뒤로 감 */
+    } else if (dt > APP_MAX_DT_S) {
+        dt = APP_MAX_DT_S;
+    }
 
     meter_sample_t s;
     if (a->hw.read(a->hw.ctx, &s)) {

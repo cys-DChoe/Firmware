@@ -46,11 +46,16 @@ nvlog_err_t nvlog_mount(nvlog_t *l, const flash_ops_t *ops, uint32_t base)
     for (uint8_t s = 0; s < 2; s++) {
         for (uint32_t k = 0; k < l->slots; k++) {
             const uint32_t a = sec_addr(l, s) + k * NVLOG_REC_SIZE;
-            if (ops->read(ops->ctx, a, b, sizeof(b)) != 0) {
+            /* 머리 8 B 만 먼저 읽어 빈 칸이면 건너뜀: 내장 EDATA 는 한 번도 안 쓴 칸을 읽을 때마다
+             * ECC 오류(NMI)가 나므로 빈 칸 전체를 읽지 않게 함. 칸은 앞에서부터 쓰므로 머리가 비면 다 빈 것. */
+            if (ops->read(ops->ctx, a, b, NVLOG_HDR) != 0) {
                 return NVLOG_E_FLASH;
             }
-            if (all_ff(b, sizeof(b))) {
+            if (all_ff(b, NVLOG_HDR)) {
                 continue;
+            }
+            if (ops->read(ops->ctx, a + NVLOG_HDR, b + NVLOG_HDR, sizeof(b) - NVLOG_HDR) != 0) {
+                return NVLOG_E_FLASH;
             }
             used[s] = k + 1u;
             if (valid(b)) {

@@ -6,6 +6,7 @@
 #include "app.h"
 #include "fake_rak.h"
 #include "fake_w25q.h"
+#include "lowpower.h"
 #include "nv_w25q.h"
 
 static int fails = 0, checks = 0;
@@ -48,8 +49,15 @@ static void b_flash(void *ctx, bool on)
     }
 }
 static void b_log(void *ctx, const char *m) { snprintf(((board_t *)ctx)->last_log, 96, "%s", m); }
+static bool b_set_time(void *ctx, uint32_t t)
+{
+    board_t *b = ctx;
+    b->now = t;
+    b->time_ok = true;
+    return true;
+}
 
-static const app_hw_t HW = {b_read, b_now, b_time, b_batt, b_flash, b_log, &B};
+static const app_hw_t HW = {b_read, b_now, b_time, b_batt, b_flash, b_log, &B, b_set_time};
 
 static ring_t RING;
 static nvlog_t NS, NC;
@@ -195,6 +203,35 @@ int main(void)
     run_for(60);
     ok("3.4 V → 경고 비트", last_report(&r) && (r.flags & REPORT_F_BATT_WARN) && !(r.flags & REPORT_F_BATT_QUALITY) &&
                                r.batt_mv == 3400);
+
+    printf("망 시각으로 시계 맞추기\n");
+    /* 지금 가짜 RTC 는 2026-11-16 09:xx. 망은 3시간 뒤라고 알려 줌 */
+    const uint32_t real = B.now + 3u * 3600u;
+    lp_civil_t c;
+    lp_civil_from_unix(real, &c);
+    snprintf(F.ltime, sizeof(F.ltime), "%02uh%02um%02us on %02u/%02u/%04u", c.hour, c.min, c.sec, c.month, c.day, c.year);
+    app_lora_start(&A);
+    push(&F, "+EVT:JOINED\r\n");
+    F.joined = true;
+    const double tot0 = A.meter.total_nm3;
+    B.s.dp_raw_pa = 40.8;
+    const uint32_t stop_at = B.now + 300u;
+    while (B.now < stop_at && A.time_syncs == 0) {
+        const uint32_t ms = app_step(&A);
+        if (R.tx_pending) {
+            push(&F, "+EVT:TX_DONE\r\n");
+        }
+        B.now += ms / 1000u;
+        F.clock += ms;
+    }
+    ok("시각 요청을 켰다가(TIMEREQ=1) 맞춘 뒤 끔", A.time_syncs == 1 && strcmp(val_of(&F, "AT+TIMEREQ"), "0") == 0);
+    ok("RTC 가 3시간 앞으로 맞춰짐", B.time_ok && B.now >= real && B.now < real + 120u);
+    ok("시계가 뛴 3시간을 적산하지 않음 (유량 0.46 Nm³/h 면 1.4 Nm³ 가 될 뻔)", A.meter.total_nm3 - tot0 < 0.05);
+    run_for(70);
+    ok("그 뒤 보고엔 시계 안 맞춤 비트가 없음", last_report(&r) && !(r.flags & REPORT_F_TIME_UNSYNCED) && r.unix_s >= real);
+    const uint32_t syncs = A.time_syncs;
+    run_for(600);
+    ok("하루가 안 지나면 다시 안 물음", A.time_syncs == syncs);
 
     printf("\n%d / %d 통과\n", checks - fails, checks);
     return fails ? 1 : 0;

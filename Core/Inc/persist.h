@@ -1,5 +1,5 @@
 /* 정전 뒤에도 남겨야 하는 값 두 가지 — nvlog 에 따로 저장
- *   설정(settings): 영점 · 방출 문턱(설치 입력) · LoRa 대역 · 가입 키 — 거의 안 바뀜
+ *   설정(settings): 영점 · 방출 문턱(설치 입력) · LoRa 대역 · 가입 키 · 셀 전압 보정 — 거의 안 바뀜
  *   계수(counter): 누적 사용량 · 순번 · 방출 분 · 고갈 횟수 · 이벤트 수 — 1분마다
  * 바이트로 바꿀 때 순서 · 크기를 고정(작은 쪽 먼저)해서 컴파일러 · 판이 달라도 같은 모양.
  */
@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include "nvlog.h"
 
-#define PERSIST_SETTINGS_LEN  50u
+#define PERSIST_SETTINGS_LEN  52u   /* 50 B 판(배터리 보정 없음)도 읽힘: 빠진 칸은 0 */
 #define PERSIST_COUNTER_LEN   38u
 
 typedef struct {
@@ -20,6 +20,7 @@ typedef struct {
     bool zero_set;
     bool keys_set;
     uint8_t dev_eui[8], app_eui[8], app_key[16];
+    int16_t batt_cal_mv;     /* 셀 전압 1점 보정값 (생산 때 실제 전압 − 잰 값) */
 } settings_t;
 
 typedef struct {

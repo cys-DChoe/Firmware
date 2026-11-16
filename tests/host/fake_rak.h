@@ -28,6 +28,7 @@ typedef struct {
     int resets;
     bool rst_level;
     uint32_t rst_low_ms;
+    char ltime[48];           /* AT+LTIME=? 답 (비면 "00h00m00s on 01/01/2000") */
 } fake_t;
 
 void push(fake_t *f, const char *s);

@@ -26,8 +26,13 @@ HAL_StatusTypeDef lp_init(void)
     g_rtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
     g_rtc.Init.OutPutPullUp = RTC_OUTPUT_PULLUP_NONE;
     g_rtc.Init.BinMode = RTC_BINARY_NONE;
-    if (HAL_RTC_Init(&g_rtc) != HAL_OK) {
-        return HAL_ERROR;
+    if ((RTC->ICSR & RTC_ICSR_INITS) == 0u) {
+        /* 처음 켤 때만 초기화. 이미 달력이 돌고 있으면(MCU 만 리셋) 맞춰 둔 시각을 지킴 */
+        if (HAL_RTC_Init(&g_rtc) != HAL_OK) {
+            return HAL_ERROR;
+        }
+    } else {
+        g_rtc.State = HAL_RTC_STATE_READY;
     }
     HAL_NVIC_SetPriority(RTC_IRQn, 4, 0);
     HAL_NVIC_EnableIRQ(RTC_IRQn);
