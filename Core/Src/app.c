@@ -43,7 +43,11 @@ void app_init(app_t *a, const app_hw_t *hw, ring_t *ring, nvlog_t *nv_set, nvlog
     if (a->settings.vent_p_pa > 0.0) {
         cfg.vent_p_pa = a->settings.vent_p_pa;
     }
+    cfg.pg_full_scale_pa = (double)app_pg_fs_pa(a);
     meter_init(&a->meter, &cfg);
+    if (a->hw.set_pg_fs != NULL) {
+        a->hw.set_pg_fs(a->hw.ctx, (double)app_pg_fs_pa(a));   /* 센서 쪽 환산 · 자르기 범위도 같이 */
+    }
     if (a->settings.zero_set) {
         meter_set_zero(&a->meter, a->settings.zero_pa);
     }
@@ -79,6 +83,37 @@ void app_init(app_t *a, const app_hw_t *hw, ring_t *ring, nvlog_t *nv_set, nvlog
     }
     flash_on(a, false);
     a->boot_flags = REPORT_F_BOOT;
+}
+
+uint16_t app_pg_fs_pa(const app_t *a)
+{
+    return a->settings.pg_fs_pa != 0u ? a->settings.pg_fs_pa : (uint16_t)APP_PG_FS_DEFAULT_PA;
+}
+
+bool app_downlink(app_t *a, uint8_t port, const uint8_t *d, uint8_t len)
+{
+    if (port != APP_CFG_PORT || len < 1u) {
+        return false;
+    }
+    if (d[0] == APP_CFG_PG_FS && len == 3u) {
+        const uint16_t pa = (uint16_t)((d[1] << 8) | d[2]);
+        if (pa != 0u && (pa < APP_PG_FS_MIN_PA || pa > APP_PG_FS_MAX_PA)) {
+            say(a, "설정: 정압 만점 범위 밖 — 무시");
+            return false;
+        }
+        a->settings.pg_fs_pa = pa;
+        flash_on(a, true);
+        const bool ok = settings_save(a->nv_set, &a->settings) == NVLOG_OK;
+        flash_on(a, false);
+        a->meter.cfg.pg_full_scale_pa = (double)app_pg_fs_pa(a);
+        if (a->hw.set_pg_fs != NULL) {
+            a->hw.set_pg_fs(a->hw.ctx, (double)app_pg_fs_pa(a));
+        }
+        say(a, ok ? "설정: 정압 만점 바꿈" : "설정: 정압 만점 바꿈 (저장 실패 — 다시 켜면 옛 값)");
+        return true;
+    }
+    say(a, "설정: 모르는 명령");
+    return false;
 }
 
 void app_set_boot(app_t *a, bool abnormal)
@@ -292,6 +327,10 @@ static void lora_work(app_t *a, uint32_t now)
         return;
     }
     rak_poll(a->rak);
+    if (a->rak->rx_new) {
+        a->rak->rx_new = false;
+        (void)app_downlink(a, a->rak->rx.port, a->rak->rx.data, a->rak->rx.len);
+    }
     if (a->rak->joined != a->joined_seen) {
         a->joined_seen = a->rak->joined;
         if (a->joined_seen) {

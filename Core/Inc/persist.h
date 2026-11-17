@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include "nvlog.h"
 
-#define PERSIST_SETTINGS_LEN  52u   /* 50 B 판(배터리 보정 없음)도 읽힘: 빠진 칸은 0 */
+#define PERSIST_SETTINGS_LEN  54u   /* 옛 50 · 52 B 판도 읽힘: 빠진 칸은 0 */
 #define PERSIST_COUNTER_LEN   38u
 
 typedef struct {
@@ -21,6 +21,7 @@ typedef struct {
     bool keys_set;
     uint8_t dev_eui[8], app_eui[8], app_key[16];
     int16_t batt_cal_mv;     /* 셀 전압 1점 보정값 (생산 때 실제 전압 − 잰 값) */
+    uint16_t pg_fs_pa;       /* 정압 센서 만점 Pa — 0 = 기본(ABP2 006KG, 6000). 2.5 kPa 품번으로 바꾸면 2500 (11/17) */
 } settings_t;
 
 typedef struct {

@@ -26,6 +26,14 @@
 #include "ring.h"
 
 #define APP_LORA_PORT        1u      /* 1분 보고 형식 v1 */
+/* 설정 바꾸기 (서버 → 계량기, 내려받기 포트 10) — 형식은 서버 담당과 맞출 때 같이 확정
+ *   01 hh ll : 정압 센서 만점 Pa (big-endian, 1000 – 40000). 센서를 다른 범위 품번으로 갈았을 때.
+ *   0 이면 기본값(6000)으로. 받으면 바로 적용하고 설정에 저장. */
+#define APP_CFG_PORT         10u
+#define APP_CFG_PG_FS        0x01u
+#define APP_PG_FS_DEFAULT_PA 6000u   /* ABP2DRNT006KG2A3XX (보드 U-S2) */
+#define APP_PG_FS_MIN_PA     1000u
+#define APP_PG_FS_MAX_PA     40000u
 #define APP_RESEND_WINDOW    60u     /* 최근 60분 기록까지 다시 보냄 */
 #define APP_RESEND_GAP_S     20u
 #define APP_JOIN_RETRY_S     600u
@@ -48,6 +56,7 @@ typedef struct {
     void (*log)(void *ctx, const char *msg);       /* 없으면 NULL */
     void *ctx;
     bool (*set_time)(void *ctx, uint32_t unix_s);  /* RTC 맞추기 (없으면 NULL — 시계 맞추기 안 함) */
+    void (*set_pg_fs)(void *ctx, double pa);        /* 정압 센서 만점 바꾸기 (없으면 NULL) */
 } app_hw_t;
 
 typedef struct {
@@ -98,4 +107,8 @@ bool app_zero(app_t *a);
 /* 키 넣기 (처음 설치 때 · secrets.h 에서) — 저장 뒤 다시 설정 · 가입 */
 /* 켠 까닭: abnormal = 워치독 · 오류로 재시작함 → 첫 기록에 REPORT_F_FAULT_RESET */
 void app_set_boot(app_t *a, bool abnormal);
+/* 내려받은 설정 명령 처리 (포트 · 내용). 알아들었으면 true */
+bool app_downlink(app_t *a, uint8_t port, const uint8_t *data, uint8_t len);
+/* 지금 쓰는 정압 센서 만점 Pa (설정 0 이면 기본값) */
+uint16_t app_pg_fs_pa(const app_t *a);
 bool app_set_keys(app_t *a, const uint8_t dev_eui[8], const uint8_t app_eui[8], const uint8_t app_key[16]);

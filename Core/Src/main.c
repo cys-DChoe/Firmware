@@ -98,7 +98,15 @@ static bool hw_set_time(void *ctx, uint32_t t)
     return lp_set_time_unix(t) == HAL_OK;
 }
 
-static const app_hw_t HW = {hw_read, hw_now, hw_time_valid, hw_batt, hw_flash, hw_log, NULL, hw_set_time};
+/* 정압 센서 만점 (설정 · 내려받기로 바꿈 — 센서를 다른 범위 품번으로 갈았을 때) */
+static void hw_set_pg_fs(void *ctx, double pa)
+{
+    (void)ctx;
+    s_sens.abp2.p_max_pa = pa;
+    printf("정압 센서 만점: %.0f Pa\n", pa);
+}
+
+static const app_hw_t HW = {hw_read, hw_now, hw_time_valid, hw_batt, hw_flash, hw_log, NULL, hw_set_time, hw_set_pg_fs};
 
 /* 버튼을 누르고 있는 동안 기다려 3초 넘으면 영점 */
 static void button_check(void)

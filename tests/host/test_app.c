@@ -25,6 +25,7 @@ typedef struct {
     uint32_t now;
     meter_sample_t s;
     bool sensors_ok;
+    double pg_fs;               /* 앱이 알려 준 정압 센서 만점 */
     bool time_ok;
     uint16_t batt;
     int flash_on_calls;
@@ -57,7 +58,8 @@ static bool b_set_time(void *ctx, uint32_t t)
     return true;
 }
 
-static const app_hw_t HW = {b_read, b_now, b_time, b_batt, b_flash, b_log, &B, b_set_time};
+static void b_set_pg_fs(void *ctx, double pa) { ((board_t *)ctx)->pg_fs = pa; }
+static const app_hw_t HW = {b_read, b_now, b_time, b_batt, b_flash, b_log, &B, b_set_time, b_set_pg_fs};
 
 static ring_t RING;
 static nvlog_t NS, NC;
@@ -117,6 +119,7 @@ int main(void)
     printf("처음 켜기 (빈 플래시 · 키 없음)\n");
     boot();
     ok("누적 0 · 영점 없음 · 대역 KR920", A.meter.total_nm3 == 0.0 && !A.settings.zero_set && A.settings.band == 7);
+    ok("정압 만점 기본 6000 Pa (센서 · 범위 검사 둘 다)", B.pg_fs == 6000.0 && A.meter.cfg.pg_full_scale_pa == 6000.0);
     ok("LoRa: 속도 9600 으로 맞추고 키 없어서 기록만", app_lora_start(&A) == RAK_OK && !A.lora_ready && F.mod_baud == 9600);
     run_for(3 * 60 + 10);
     ok("3분 → 1분 보고 3개가 링에 쌓임", A.reports == 3 && RING.next_seq == 3);
@@ -336,6 +339,31 @@ int main(void)
         ok("그 뒤 1 s 간격은 그대로 1 s 치", fabs((A.meter.total_m3 - v1) - q) < 1e-9);
     }
     idle_gas();
+
+    printf("정압 센서를 2.5 kPa 품번으로 갈았을 때 → 내려받기로 만점 바꿈\n");
+    {
+        const uint8_t bad_port[3] = {0x01, 0x09, 0xC4};
+        ok("포트 1 로 오면 무시", !app_downlink(&A, 1, bad_port, 3) && B.pg_fs == 6000.0);
+        const uint8_t too_small[3] = {0x01, 0x01, 0xF4};          /* 500 Pa */
+        ok("범위 밖(500 Pa)은 무시", !app_downlink(&A, APP_CFG_PORT, too_small, 3) && B.pg_fs == 6000.0);
+        const uint8_t unknown[2] = {0x7F, 0x00};
+        ok("모르는 명령은 무시", !app_downlink(&A, APP_CFG_PORT, unknown, 2));
+        if (!A.lora_ready) {                                       /* 앞 시험에서 리셋 중이면 다시 띄움 */
+            (void)app_lora_start(&A);
+        }
+        push(&F, "+EVT:JOINED\r\n");
+        run_for(5);
+        push(&F, "+EVT:RX_1:-70:8:UNICAST:10:0109C4\r\n");      /* 01 · 2500 */
+        run_for(2);
+        ok("LoRa 로 받음 → 센서 · 범위 검사 2500 Pa", B.pg_fs == 2500.0 && A.meter.cfg.pg_full_scale_pa == 2500.0 &&
+                                                        A.settings.pg_fs_pa == 2500u);
+        B.pg_fs = 0.0;
+        boot();
+        ok("다시 켜도 2500 Pa (설정에 저장됨)", B.pg_fs == 2500.0 && A.meter.cfg.pg_full_scale_pa == 2500.0);
+        const uint8_t back[3] = {0x01, 0x00, 0x00};
+        ok("0 을 보내면 기본 6000 으로", app_downlink(&A, APP_CFG_PORT, back, 3) && B.pg_fs == 6000.0 &&
+                                           app_pg_fs_pa(&A) == 6000u);
+    }
 
     printf("\n%d / %d 통과\n", checks - fails, checks);
     return fails ? 1 : 0;

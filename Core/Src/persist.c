@@ -41,6 +41,8 @@ size_t settings_pack(const settings_t *s, uint8_t *o)
     memcpy(o + 34, s->app_key, 16);
     o[50] = (uint8_t)(uint16_t)s->batt_cal_mv;
     o[51] = (uint8_t)((uint16_t)s->batt_cal_mv >> 8);
+    o[52] = (uint8_t)s->pg_fs_pa;
+    o[53] = (uint8_t)(s->pg_fs_pa >> 8);
     return PERSIST_SETTINGS_LEN;
 }
 
@@ -55,6 +57,7 @@ void settings_unpack(const uint8_t *in, settings_t *s)
     memcpy(s->app_eui, in + 26, 8);
     memcpy(s->app_key, in + 34, 16);
     s->batt_cal_mv = (int16_t)(uint16_t)(in[50] | in[51] << 8);
+    s->pg_fs_pa = (uint16_t)(in[52] | in[53] << 8);
 }
 
 size_t counter_pack(const counter_t *c, uint8_t *o)
