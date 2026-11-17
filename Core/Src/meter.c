@@ -68,6 +68,7 @@ void meter_default_cfg(meter_cfg_t *c)
     c->gas_molar_kg_mol = 0.6 * 0.01604 + 0.4 * 0.04401;   /* 0.02723 */
 
     c->event_start_m3h = 0.05;
+    c->cutoff_m3h = 0.05;
     c->event_start_hold_s = 30.0;
     c->event_end_m3h = 0.03;
     c->event_end_hold_s = 60.0;
@@ -259,8 +260,8 @@ void meter_step(meter_t *m, const meter_sample_t *s, double dt)
     m->last_flow_m3h = q_h;
     m->last_flow_nm3h = q_h * nf;
 
-    /* 4절: 사용량 = Σ Qₙ × Δt */
-    const double dv = q * dt;
+    /* 4절: 사용량 = Σ Qₙ × Δt — 컷오프 아래는 잡음으로 보고 0 */
+    const double dv = (q_h < c->cutoff_m3h) ? 0.0 : q * dt;
     const double dvn = dv * nf;
     m->total_m3 += dv;
     m->total_nm3 += dvn;

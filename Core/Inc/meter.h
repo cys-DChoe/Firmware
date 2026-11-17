@@ -30,6 +30,11 @@ typedef struct {
     double event_start_hold_s;  /* 30 s 이상 */
     double event_end_m3h;       /* 0.03 m³/h 아래 */
     double event_end_hold_s;    /* 60 s 이상 */
+    /* 잡음 컷오프 (11/17 결정): 이보다 작은 유량은 사용량에 안 더함.
+     * 차압이 작으면 √ 때문에 크게 부풀려짐 — HSC 1칸(0.153 Pa)만 떠도 0.03 m³/h, 하루 0.7 m³.
+     * 기본값 = 이벤트 시작 기준 0.05 m³/h (≈ 0.45 Pa). 벤치 잡음 재고 바꿈.
+     * 이벤트 · 고갈 판정과 누설 B(30분 평균 차압)는 자르기 전 값으로 봄. */
+    double cutoff_m3h;
 
     /* 고갈 (6절) */
     double depl_p_ratio;        /* P_g < 0.3 × P_idle */

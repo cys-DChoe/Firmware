@@ -3,6 +3,7 @@
 #include "lora_uart_stm32.h"
 #include "lowpower_stm32.h"
 #include "nv_edata.h"
+#include "wdg.h"
 
 void NMI_Handler(void)
 {
@@ -10,22 +11,30 @@ void NMI_Handler(void)
     if (nv_edata_nmi()) {
         return;
     }
-    while (1) {
-    }
+    wdg_fault(WDG_FAULT_NMI, 0u, 0u);
 }
 
-void HardFault_Handler(void)
+/* HardFault: 멈춘 곳(PC)과 원인(CFSR)을 백업 칸에 적고 재시작. 디버거가 붙어 있으면 LED2 켜고 멈춤 (wdg.h).
+ * 쌓인 레지스터에서 PC 를 꺼내려고 앞부분은 어셈블리 — 예외 직전 스택(MSP/PSP)을 r0 로 넘김. */
+void hardfault_c(const uint32_t *frame)
 {
-    /* 디버거로 멈춰 보면 여기서 서 있음. LED2 를 켜 두어 눈으로도 알게 함. */
-    HAL_GPIO_WritePin(LED2_PORT, LED2_PIN, GPIO_PIN_SET);
-    while (1) {
-    }
+    wdg_fault(WDG_FAULT_HARD, frame[6], SCB->CFSR);    /* frame: r0 r1 r2 r3 r12 lr pc xpsr */
 }
 
-void MemManage_Handler(void) { HardFault_Handler(); }
-void BusFault_Handler(void) { HardFault_Handler(); }
-void UsageFault_Handler(void) { HardFault_Handler(); }
-void SecureFault_Handler(void) { HardFault_Handler(); }
+__attribute__((naked)) void HardFault_Handler(void)
+{
+    __asm volatile(
+        "tst lr, #4      \n"
+        "ite eq          \n"
+        "mrseq r0, msp   \n"
+        "mrsne r0, psp   \n"
+        "b hardfault_c   \n");
+}
+
+void MemManage_Handler(void) __attribute__((alias("HardFault_Handler")));
+void BusFault_Handler(void) __attribute__((alias("HardFault_Handler")));
+void UsageFault_Handler(void) __attribute__((alias("HardFault_Handler")));
+void SecureFault_Handler(void) __attribute__((alias("HardFault_Handler")));
 
 void SVC_Handler(void) {}
 void DebugMon_Handler(void) {}

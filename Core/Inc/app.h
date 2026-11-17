@@ -62,6 +62,7 @@ typedef struct {
     bool started;
     uint32_t last_s;            /* 지난 app_step 시각 */
     uint32_t last_minute;       /* 마지막으로 보고 만든 분 번호 (Unix 초 / 60) */
+    uint16_t boot_flags;        /* 켠 뒤 첫 기록에 붙일 비트 (REPORT_F_BOOT · FAULT_RESET) */
     uint16_t batt_flags;        /* 배터리 비트 오르내림 폭용 */
     bool fresh_pending;         /* 방금 만든 보고를 아직 안 보냄 */
     uint32_t fresh_seq;
@@ -93,4 +94,6 @@ uint32_t app_step(app_t *a);
 /* 버튼 길게: 지금 차압 평균을 영점으로 · 저장 */
 bool app_zero(app_t *a);
 /* 키 넣기 (처음 설치 때 · secrets.h 에서) — 저장 뒤 다시 설정 · 가입 */
+/* 켠 까닭: abnormal = 워치독 · 오류로 재시작함 → 첫 기록에 REPORT_F_FAULT_RESET */
+void app_set_boot(app_t *a, bool abnormal);
 bool app_set_keys(app_t *a, const uint8_t dev_eui[8], const uint8_t app_eui[8], const uint8_t app_key[16]);

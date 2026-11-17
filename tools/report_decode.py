@@ -27,6 +27,8 @@ FLAGS = [
     "RESENT",         # 다시 보낸 기록
     "CLIPPED",        # 범위 넘어 잘린 값 있음
     "INCOMPLETE",     # 측정 시간 54 s 미만
+    "BOOT",           # 켠 뒤 첫 기록
+    "FAULT_RESET",    # 워치독 · 오류로 재시작한 뒤 첫 기록
 ]
 
 

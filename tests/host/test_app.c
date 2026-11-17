@@ -128,6 +128,13 @@ int main(void)
     ok("가스 안 쓸 땐 10초마다 깸", app_step(&A) == 10000u);
     uint32_t seq;
     ok("세 개 모두 아직 안 보냄", ring_find_unsent(&RING, 60, &seq) == RING_OK && seq == 0);
+    {
+        ring_rec_t rec0;
+        report_t r0;
+        ok("켠 뒤 첫 기록에만 '켬' 비트 (이상 재시작 비트는 없음)",
+           ring_read(&RING, 0, &rec0) == RING_OK && report_decode(rec0.report, RING_REPORT_SIZE, &r0) &&
+               (r0.flags & REPORT_F_BOOT) && !(r0.flags & REPORT_F_FAULT_RESET) && !(r.flags & REPORT_F_BOOT));
+    }
 
     printf("영점 버튼 (차압 센서가 0.8 Pa 로 치우쳐 있음)\n");
     B.s.dp_raw_pa = 0.8;
@@ -189,6 +196,18 @@ int main(void)
     ok("누적 = 링 마지막 보고 값 (0.1 L 안)", fabs(A.meter.total_nm3 - total) < 0.0001 + 1e-9);
     ok("보고 순번도 이어짐", A.counter.report_seq == next_report);
     ok("로그로 알림", strstr(B.last_log, "되살림") != NULL);
+
+    printf("워치독 · 오류로 재시작했을 때\n");
+    app_set_boot(&A, true);
+    run_for(2 * 60);
+    {
+        ring_rec_t rb;
+        report_t r1;
+        ok("다음 첫 기록에 '켬' + '이상 재시작' 비트, 그다음 기록엔 없음",
+           ring_read(&RING, RING.next_seq - 2u, &rb) == RING_OK && report_decode(rb.report, RING_REPORT_SIZE, &r1) &&
+               (r1.flags & REPORT_F_BOOT) && (r1.flags & REPORT_F_FAULT_RESET) && last_report(&r) &&
+               !(r.flags & (REPORT_F_BOOT | REPORT_F_FAULT_RESET)));
+    }
 
     printf("센서가 안 될 때\n");
     B.sensors_ok = false;

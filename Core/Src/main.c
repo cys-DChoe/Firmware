@@ -17,6 +17,7 @@
 #include "nv_edata.h"
 #include "nv_w25q.h"
 #include "sensors.h"
+#include "wdg.h"
 #if __has_include("secrets.h")
 #include "secrets.h"
 #endif
@@ -129,6 +130,8 @@ int main(void)
     HAL_Init();
     mpu_init();                 /* 캐시를 켜기 전에: 공장 보정값 · EDATA 는 캐시 안 함 */
     HAL_ICACHE_Enable();
+    const wdg_boot_t boot = wdg_boot_cause();   /* 왜 켜졌나 (워치독 · 오류면 다음 보고에 표시) */
+    wdg_start();                                /* 30 s — 켜는 동안도 멈추면 재시작 */
 
     gpio_init();
     if (log_init() != HAL_OK) {
@@ -136,6 +139,11 @@ int main(void)
     }
     printf("\n== gasmeter %s ==\n", FW_VERSION);
     printf("SYSCLK %lu Hz\n", (unsigned long)HAL_RCC_GetSysClockFreq());
+    printf("켠 까닭: %s", wdg_cause_name(boot.cause));
+    if (boot.cause == WDG_CAUSE_FAULT) {
+        printf(" (코드 %u · 주소 0x%08lx · CFSR 0x%08lx)", boot.code, (unsigned long)boot.info, (unsigned long)boot.cfsr);
+    }
+    printf(wdg_abnormal(&boot) ? " · 이어서 %lu번째\n" : "\n", (unsigned long)boot.streak);
 
     /* 1) 시계: LSE → RTC · 잠 설정 */
     const HAL_StatusTypeDef lse = lse_start();
@@ -144,12 +152,16 @@ int main(void)
         Error_Handler();                       /* LSE 없으면 잠 · LoRa 9600 이 안 됨 */
     }
 
+    wdg_kick();
+
     /* 2) 센서: I2C2(HSC) · I2C3(ABP2 · BMP390), 전원 켜고 BMP390 설정 */
     if (i2c_stm32_init(&s_i2c_dp, I2C2) != HAL_OK || i2c_stm32_init(&s_i2c_pg, I2C3) != HAL_OK) {
         Error_Handler();
     }
     sensors_init(&s_sens, &s_i2c_dp.bus, &s_i2c_pg.bus, sens_power);
     printf("센서 전원: BMP390 %s\n", sensors_power_on(&s_sens) == SENS_OK ? "OK" : "응답 없음");
+
+    wdg_kick();
 
     /* 3) 외부 플래시: 1분 기록 링 + 누적 · 설정 저장 */
     if (flash_spi_init(&s_flash) != HAL_OK) {
@@ -177,8 +189,11 @@ int main(void)
     }
     printf("링: 다음 순번 %lu\n", (unsigned long)s_ring.next_seq);
 
+    wdg_kick();
+
     /* 4) 계산 · 저장값 되살리기 */
     app_init(&s_app, &HW, &s_ring, &s_nv_set, &s_nv_ctr, &s_rak);
+    app_set_boot(&s_app, wdg_abnormal(&boot));
 #ifdef SECRETS_HAVE_LORA_KEYS
     app_set_keys(&s_app, SECRET_DEV_EUI, SECRET_APP_EUI, SECRET_APP_KEY);
 #endif
@@ -189,11 +204,19 @@ int main(void)
         Error_Handler();
     }
     rak_init(&s_rak, &g_lora_uart.io);
+    wdg_kick();
     printf("LoRa: %d\n", (int)app_lora_start(&s_app));
     hw_flash(NULL, false);
 
-    /* 6) 깨고 · 재고 · 저장하고 · 보내고 · 자기 */
+    /* 6) 깨고 · 재고 · 저장하고 · 보내고 · 자기 — 깰 때마다(1 · 10 s) 워치독을 밀어 줌 */
+    const uint32_t run_from = hw_now(NULL);
+    bool healthy = false;
     while (1) {
+        wdg_kick();
+        if (!healthy && hw_now(NULL) - run_from >= 600u) {
+            wdg_healthy();          /* 10분 정상 → 이어진 이상 재시작 횟수 지움 */
+            healthy = true;
+        }
         const uint32_t ms = app_step(&s_app);
         if (s_btn_irq) {
             s_btn_irq = false;
@@ -296,8 +319,6 @@ static HAL_StatusTypeDef lse_start(void)
 
 void Error_Handler(void)
 {
-    __disable_irq();
-    HAL_GPIO_WritePin(LED2_PORT, LED2_PIN, GPIO_PIN_SET);
-    while (1) {
-    }
+    /* 원인(부른 곳)을 백업 칸에 적고 재시작 — 디버거가 붙어 있으면 LED2 켜고 멈춤 (wdg.h) */
+    wdg_fault(WDG_FAULT_ERROR, (uint32_t)__builtin_return_address(0), 0u);
 }

@@ -1,5 +1,6 @@
 /* newlib 이 찾는 최소 시스템 호출 — 파일 시스템이 없으니 대부분 "안 됨"으로 답함.
  * _write 는 log.c 에 있음(printf → USART3). */
+#include "wdg.h"
 #include <errno.h>
 #include <sys/stat.h>
 
@@ -35,9 +36,7 @@ void *_sbrk(ptrdiff_t incr)
 /* 소수 printf(-u _printf_float)가 abort 를 끌어와서 필요한 빈 함수들 — 실제로 불리면 멈춤 */
 void _exit(int status)
 {
-    (void)status;
-    while (1) {
-    }
+    wdg_fault(WDG_FAULT_EXIT, (uint32_t)status, 0u);    /* abort 등 — 적고 재시작 (wdg.h) */
 }
 
 int _kill(int pid, int sig)

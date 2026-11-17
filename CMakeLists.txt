@@ -68,6 +68,7 @@ add_executable(${PROJECT_NAME}.elf
   Core/Src/nv_edata.c
   Core/Src/app.c
   Core/Src/batt.c
+  Core/Src/wdg_stm32.c
   Core/Src/batt_stm32.c
   Core/Src/log.c
   Core/Src/syscalls.c

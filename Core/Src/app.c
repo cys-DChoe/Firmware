@@ -65,6 +65,12 @@ void app_init(app_t *a, const app_hw_t *hw, ring_t *ring, nvlog_t *nv_set, nvlog
         }
     }
     flash_on(a, false);
+    a->boot_flags = REPORT_F_BOOT;
+}
+
+void app_set_boot(app_t *a, bool abnormal)
+{
+    a->boot_flags = REPORT_F_BOOT | (abnormal ? REPORT_F_FAULT_RESET : 0u);
 }
 
 static bool no_answer(rak_err_t e) { return e == RAK_E_TIMEOUT || e == RAK_E_IO; }
@@ -153,6 +159,8 @@ static void build_report(app_t *a, const meter_minute_t *mm, uint32_t now, repor
         a->batt_flags = report_battery_flags(mv, a->batt_flags);
         f |= a->batt_flags;
     }
+    f |= a->boot_flags;                 /* 켠 뒤 첫 기록에만 */
+    a->boot_flags = 0u;
     r->batt_mv = mv;
     r->flags = f;
 }

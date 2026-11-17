@@ -248,6 +248,39 @@ static void test_minute_summary(void)
     is_true("조리 중으로 표시", r.flowing);
 }
 
+static void test_cutoff(void)
+{
+    printf("잡음 컷오프 (11/17 결정: 0.05 m³/h 아래는 사용량에 안 더함)\n");
+    meter_cfg_t c;
+    meter_default_cfg(&c);
+    meter_t m;
+    meter_init(&m, &c);
+    /* 영점 근처 잡음: 0 · +1칸 · +2칸(0.306 Pa) 을 하루 동안 번갈아 */
+    const double noise[3] = {0.0, 0.153, 0.306};
+    for (int k = 0; k < 86400; k++) {
+        const meter_sample_t s = ex_sample(noise[k % 3], 300.0);
+        meter_step(&m, &s, 1.0);
+        if ((k + 1) % 60 == 0) {
+            meter_minute(&m, NULL);
+        }
+    }
+    near("잡음 하루 → 사용량 m³", m.total_m3, 0.0, 1e-12);
+    is_true("잡음으로 이벤트 안 생김", m.events.count == 0u && !m.evt_active);
+
+    meter_init(&m, &c);
+    uint32_t clk = 0;
+    run(&m, dp_for_flow(&c, 0.06, 300.0), 300.0, 3600.0, 1.0, &clk);
+    near("0.06 m³/h 한 시간 → 0.06 m³ (그대로 셈)", m.total_m3, 0.06, 0.0005);
+
+    meter_init(&m, &c);
+    clk = 0;
+    const double dp_lo = dp_for_flow(&c, 0.048, 300.0);
+    run(&m, dp_lo, 300.0, 3.0 * 3600.0, 1.0, &clk);
+    near("0.048 m³/h 세 시간 → 0 (컷오프 아래)", m.total_m3, 0.0, 1e-12);
+    is_true("그래도 누설 B 는 자르기 전 차압으로 잡힘", dp_lo >= c.leak_dp_min_pa && m.leak_active);
+    printf("       (0.048 m³/h = 차압 %.3f Pa, 누설 문턱 %.2f Pa)\n", dp_lo, c.leak_dp_min_pa);
+}
+
 int main(void)
 {
     test_flow_examples();
@@ -256,6 +289,7 @@ int main(void)
     test_vent();
     test_leak_example6();
     test_minute_summary();
+    test_cutoff();
     printf("\n%d / %d 통과\n", checks - fails, checks);
     return fails ? 1 : 0;
 }
