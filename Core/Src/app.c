@@ -59,17 +59,21 @@ void app_init(app_t *a, const app_hw_t *hw, ring_t *ring, nvlog_t *nv_set, nvlog
         a->meter.depletions = a->counter.depletions;
         a->meter.events.count = a->counter.events;
         /* 1분마다 링에 먼저 쓰고 누적을 나중에 저장함 → 그 사이 전원이 끊기면 링이 한 분 앞섬.
-         * 링 마지막 보고가 누적이 아직 안 센 순번이고 값이 더 크면 그걸로 (0.1 L 단위) */
+         * 링 마지막 보고가 누적이 아직 안 센 순번이면:
+         *   순번은 늘 그 다음으로 (안 그러면 다음 보고가 같은 순번으로 나감),
+         *   누적은 큰 쪽으로 (보고는 0.1 L 로 반올림돼 있어, 그 분에 안 썼으면 저장값이 더 클 수 있음) */
         ring_rec_t last;
         report_t r;
         if (ring_last(ring, &last) == RING_OK && report_decode(last.report, RING_REPORT_SIZE, &r) &&
-            r.seq == a->counter.report_seq && r.total_nm3 > a->counter.total_nm3) {
-            const double add = r.total_nm3 - a->counter.total_nm3;
-            const double ratio = a->counter.total_nm3 > 0.0 ? a->counter.total_m3 / a->counter.total_nm3 : 1.0;
-            a->meter.total_nm3 = r.total_nm3;
-            a->meter.total_m3 += add * ratio;           /* 실제 부피는 보고에 없어 비율로 */
+            r.seq == a->counter.report_seq) {
             a->counter.report_seq = (uint16_t)(r.seq + 1u);
-            say(a, "누적: 링이 한 분 앞서 있어 그 값으로");
+            if (r.total_nm3 > a->counter.total_nm3) {
+                const double add = r.total_nm3 - a->counter.total_nm3;
+                const double ratio = a->counter.total_nm3 > 0.0 ? a->counter.total_m3 / a->counter.total_nm3 : 1.0;
+                a->meter.total_nm3 = r.total_nm3;
+                a->meter.total_m3 += add * ratio;       /* 실제 부피는 보고에 없어 비율로 */
+            }
+            say(a, "누적: 링이 한 분 앞서 있어 순번을 이음");
         }
     } else {
         /* 누적 기록이 없으면 링의 마지막 1분 보고로 되살림 (0.1 L 단위) */
@@ -100,6 +104,10 @@ bool app_downlink(app_t *a, uint8_t port, const uint8_t *d, uint8_t len)
         if (pa != 0u && (pa < APP_PG_FS_MIN_PA || pa > APP_PG_FS_MAX_PA)) {
             say(a, "설정: 정압 만점 범위 밖 — 무시");
             return false;
+        }
+        if (pa == a->settings.pg_fs_pa) {
+            say(a, "설정: 정압 만점 같은 값 — 그대로");   /* 서버가 되풀이해 보내도 저장 칸을 닳게 하지 않음 */
+            return true;
         }
         a->settings.pg_fs_pa = pa;
         flash_on(a, true);

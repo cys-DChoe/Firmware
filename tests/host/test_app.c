@@ -222,6 +222,27 @@ int main(void)
            fabs(A.meter.total_nm3 - (t0 + 0.0123)) < 0.0001 + 1e-9 && A.counter.report_seq == (uint16_t)(rs0 + 1u));
     }
 
+    printf("같은 일인데 그 분에 가스를 안 씀 → 링 값(0.1 L 반올림)이 저장값보다 작아도 순번은 이음\n");
+    run_for(2 * 60);                                /* 누적 저장을 다시 맞춤 */
+    {
+        const double t0 = A.counter.total_nm3;
+        const uint16_t rs0 = A.counter.report_seq;
+        report_t rr;
+        memset(&rr, 0, sizeof(rr));
+        rr.seq = rs0;
+        rr.total_nm3 = t0 - 0.00004;                /* 반올림이 아래로 간 경우 */
+        uint8_t bytes[REPORT_LEN];
+        report_encode(&rr, bytes);
+        uint32_t rseq;
+        ring_append(&RING, bytes, &rseq);
+        boot();
+        ok("다음 보고 순번이 겹치지 않음", A.counter.report_seq == (uint16_t)(rs0 + 1u));
+        ok("누적은 줄지 않음 (저장값 그대로)", A.meter.total_nm3 == t0);
+        run_for(70);
+        report_t r2;
+        ok("실제 다음 보고가 다음 순번으로 나감", last_report(&r2) && r2.seq == (uint16_t)(rs0 + 1u));
+    }
+
     printf("워치독 · 오류로 재시작했을 때\n");
     app_set_boot(&A, true);
     run_for(2 * 60);
@@ -360,6 +381,10 @@ int main(void)
         B.pg_fs = 0.0;
         boot();
         ok("다시 켜도 2500 Pa (설정에 저장됨)", B.pg_fs == 2500.0 && A.meter.cfg.pg_full_scale_pa == 2500.0);
+        const uint8_t again[3] = {0x01, 0x09, 0xC4};
+        const uint32_t saves = NS.next_seq;
+        ok("같은 값을 또 받으면 다시 저장하지 않음", app_downlink(&A, APP_CFG_PORT, again, 3) && NS.next_seq == saves &&
+                                                       B.pg_fs == 2500.0);
         const uint8_t back[3] = {0x01, 0x00, 0x00};
         ok("0 을 보내면 기본 6000 으로", app_downlink(&A, APP_CFG_PORT, back, 3) && B.pg_fs == 6000.0 &&
                                            app_pg_fs_pa(&A) == 6000u);

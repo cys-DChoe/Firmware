@@ -228,11 +228,11 @@ int main(void)
     hw_flash(NULL, false);
 
     /* 6) 깨고 · 재고 · 저장하고 · 보내고 · 자기 — 깰 때마다(1 · 10 s) 워치독을 밀어 줌 */
-    const uint32_t run_from = hw_now(NULL);
+    uint32_t slept_ms = 0;          /* 제때 깬 잠의 합 — 시계(RTC)는 망 시각으로 맞출 때 뛰므로 안 씀 */
     bool healthy = false;
     while (1) {
         wdg_kick();
-        if (!healthy && hw_now(NULL) - run_from >= 600u) {
+        if (!healthy && slept_ms >= 600000u) {
             wdg_healthy();          /* 10분 정상 → 이어진 이상 재시작 횟수 지움 */
             healthy = true;
         }
@@ -241,7 +241,9 @@ int main(void)
             s_btn_irq = false;
             button_check();
         }
-        lp_sleep_ms(ms);
+        if (lp_sleep_ms(ms) == LP_WAKE_TIMER && !healthy) {
+            slept_ms += ms;
+        }
     }
 }
 
