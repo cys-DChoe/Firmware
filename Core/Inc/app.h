@@ -8,6 +8,8 @@
  *   3) 1분이 넘었으면: 1분 요약 → 24 B 보고 → 링에 저장 → 누적량 저장 → 바로 보냄
  *   4) 보낼 게 없으면 최근 60분 안의 못 보낸 기록을 하나 다시 보냄 (20 s 에 한 번)
  *   5) 가입 안 돼 있으면 10분마다 다시 가입
+ *      모듈 소식(송신 끝 60 s · 가입 결과 300 s)이 안 오면 놓친 것으로 보고 풂. 무응답 · 놓침이 3번 이어지면
+ *      모듈 리셋 → 속도 · 설정 · 가입을 처음부터. 켤 때 모듈이 답 없었어도 10분마다 다시 해 봄
  *   6) 시계: 가입하면 망에 시각을 물어(AT+TIMEREQ=1) 송신이 끝날 때마다 AT+LTIME 을 읽고,
  *      맞는 시각이 오면 RTC 를 고친 뒤 하루 동안 쉼. 시계가 뛰면 적산 · 분 경계도 같이 옮김
  *   → 다음에 깰 때까지 ms (흐름 있으면 1 s, 없으면 10 s)
@@ -33,6 +35,9 @@
 #define APP_TIMESYNC_S       86400u  /* 하루에 한 번 망 시각으로 다시 맞춤 */
 #define APP_TIME_STEP_S      2       /* 이만큼 넘게 어긋나면 RTC 를 고침 */
 #define APP_MAX_DT_S         60u     /* 한 번에 적산하는 최대 간격 (시계가 뛰었을 때 막음) */
+#define APP_TX_TIMEOUT_S     60u     /* 송신 시작 뒤 '끝' 소식을 기다리는 한도 (SF12 송신 + 수신 창 2개보다 넉넉히) */
+#define APP_JOIN_TIMEOUT_S   300u    /* AT+JOIN=1:0:10:8 = 8번 × 10 s 간격 + 수신 창, 넉넉히 */
+#define APP_LORA_MISS_MAX    3u      /* 무응답 · 소식 놓침이 이만큼 이어지면 모듈 리셋 후 처음부터 */
 
 typedef struct {
     bool (*read)(void *ctx, meter_sample_t *s);   /* 센서 읽기, 믿을 만하면 true */
@@ -63,6 +68,12 @@ typedef struct {
     bool tx_live;               /* 모듈이 보내는 중인 기록 */
     uint32_t tx_seq;
     uint32_t next_join_s, next_resend_s;
+    bool lora_started;          /* app_lora_start 를 한 번이라도 부름 (그 뒤로 실패하면 다시 해 봄) */
+    bool lora_need_reset;       /* 다음에 다시 해 볼 때 모듈 리셋부터 */
+    uint32_t next_lora_try_s;
+    uint32_t tx_start_s, join_start_s;
+    uint8_t lora_misses;        /* 무응답 · 소식 놓침 연속 횟수 */
+    bool joined_seen;           /* 가입을 본 뒤 (가입되면 놓침 횟수를 지움) */
     bool timereq_on;            /* 모듈에 시각 요청을 켜 둠 */
     bool time_synced;           /* 이번 켜짐 뒤 망 시각으로 맞춘 적 있음 */
     uint32_t next_timesync_s;
@@ -70,7 +81,7 @@ typedef struct {
     double dp_hist[APP_ZERO_SAMPLES];
     uint16_t dp_n, dp_head;
     /* 셈 (로그 · 시험용) */
-    uint32_t reports, sent, send_fail, resends;
+    uint32_t reports, sent, send_fail, resends, joins, lora_restarts, tx_timeouts;
 } app_t;
 
 /* 저장된 설정 · 누적량을 읽어 계산 모듈에 넣음. 누적 기록이 없으면 링 마지막 보고에서 되살림. */

@@ -233,6 +233,49 @@ int main(void)
     run_for(600);
     ok("하루가 안 지나면 다시 안 물음", A.time_syncs == syncs);
 
+    printf("LoRa 모듈이 '송신 끝'을 안 줌 → 60 s 뒤 풀고 다시 보냄, 3번 이어지면 모듈 리셋\n");
+    /* 앞 구간(시계 맞추기 뒤 10분)에서도 TX_DONE 을 안 넣어 이미 놓침 · 리셋이 일어남 → 다시 가입해 깨끗하게 시작 */
+    app_lora_start(&A);
+    push(&F, "+EVT:JOINED\r\n");
+    run_for(5);
+    const uint32_t to0 = A.tx_timeouts, rs0 = A.lora_restarts;
+    const uint32_t fail0 = A.send_fail, resets0 = (uint32_t)F.resets, joins0 = A.joins;
+    B.s.dp_raw_pa = 0.8;
+    const uint32_t t_stuck = B.now;
+    uint32_t first_free = 0;
+    while (B.now < t_stuck + 400u && A.lora_restarts == rs0) {
+        const uint32_t ms = app_step(&A);     /* TX_DONE 을 안 넣음 */
+        if (first_free == 0 && A.tx_timeouts > to0) {
+            first_free = B.now - t_stuck;
+        }
+        B.now += ms / 1000u;
+        F.clock += ms;
+    }
+    ok("60 s 쯤에 기다림을 풂 (영영 안 멈춤)", first_free >= 50u && first_free <= 75u && A.send_fail > fail0);
+    ok("3번 놓치자 모듈 리셋 → 설정 · 가입 다시", A.tx_timeouts == to0 + 3 && A.lora_restarts == rs0 + 1 &&
+                                                    F.resets > (int)resets0 && A.lora_ready && R.joining && A.joins > joins0);
+    ok("못 보낸 기록은 링에 남아 있음", ring_find_unsent(&RING, 60, &seq) == RING_OK);
+
+    printf("가입 결과가 안 옴 → 300 s 뒤 풀고 10분 간격 다시 가입\n");
+    const uint32_t j0 = A.joins, tj = B.now;
+    run_for(310);
+    ok("300 s 뒤 가입 기다림을 풂", !R.joining && A.joins == j0);
+    run_for(600 - 310 + 20);
+    ok("10분 뒤 다시 가입", R.joining && A.joins == j0 + 1 && B.now - tj >= 600u);
+    push(&F, "+EVT:JOINED\r\n");
+    run_for(20);
+    ok("가입되면 놓침 횟수를 지움", R.joined && A.lora_misses == 0);
+
+    printf("켤 때 모듈이 답 없음 → 10분마다 리셋하고 다시 해 봄\n");
+    F.dead = true;
+    ok("처음엔 실패", app_lora_start(&A) != RAK_OK && !A.lora_ready);
+    const int r0 = F.resets;
+    run_for(300);
+    ok("10분 전엔 다시 안 함", !A.lora_ready && F.resets == r0);
+    F.dead = false;
+    run_for(320);
+    ok("10분 뒤 리셋부터 다시 → 설정 · 가입 시작", A.lora_ready && F.resets > r0 && R.joining);
+
     printf("\n%d / %d 통과\n", checks - fails, checks);
     return fails ? 1 : 0;
 }

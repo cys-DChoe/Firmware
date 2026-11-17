@@ -67,13 +67,41 @@ void app_init(app_t *a, const app_hw_t *hw, ring_t *ring, nvlog_t *nv_set, nvlog
     flash_on(a, false);
 }
 
+static bool no_answer(rak_err_t e) { return e == RAK_E_TIMEOUT || e == RAK_E_IO; }
+
+/* 가입 시작 (시각 · 횟수 기록) */
+static rak_err_t join(app_t *a, uint32_t now)
+{
+    const rak_err_t e = rak_join_start(a->rak);
+    a->joins++;
+    a->join_start_s = now;
+    a->next_join_s = now + APP_JOIN_RETRY_S;
+    if (no_answer(e)) {
+        a->lora_misses++;
+    }
+    return e;
+}
+
+/* 설정 실패 · 무응답이면 10분 뒤 모듈 리셋부터 다시 */
+static rak_err_t lora_start_failed(app_t *a, rak_err_t e, const char *msg)
+{
+    say(a, msg);
+    a->lora_ready = false;
+    a->lora_need_reset = true;
+    a->next_lora_try_s = a->hw.now_s(a->hw.ctx) + APP_JOIN_RETRY_S;
+    return e;
+}
+
 rak_err_t app_lora_start(app_t *a)
 {
+    a->lora_started = true;
+    a->lora_ready = false;
+    a->tx_live = false;
+    rak_give_up(a->rak);                    /* 처음부터 다시: 전에 기다리던 소식은 버림 */
     bool set = false;
     rak_err_t e = rak_ensure_baud(a->rak, APP_LORA_BAUD, APP_LORA_BAUD_OLD, &set);
     if (e != RAK_OK) {
-        say(a, "LoRa: 모듈 응답 없음");
-        return e;
+        return lora_start_failed(a, e, "LoRa: 모듈 응답 없음");
     }
     if (!a->settings.keys_set) {
         say(a, "LoRa: 키 없음 — 기록만 쌓음");
@@ -92,13 +120,12 @@ rak_err_t app_lora_start(app_t *a)
     c.app_key = key;
     e = rak_configure(a->rak, &c);
     if (e != RAK_OK) {
-        say(a, "LoRa: 설정 실패");
-        return e;
+        return lora_start_failed(a, e, "LoRa: 설정 실패");
     }
     a->lora_ready = true;
-    e = rak_join_start(a->rak);
-    a->next_join_s = a->hw.now_s(a->hw.ctx) + APP_JOIN_RETRY_S;
-    return e;
+    a->lora_need_reset = false;
+    a->lora_misses = 0;
+    return join(a, a->hw.now_s(a->hw.ctx));
 }
 
 static void build_report(app_t *a, const meter_minute_t *mm, uint32_t now, report_t *r)
@@ -181,11 +208,16 @@ static bool send_seq(app_t *a, uint32_t seq, bool resend)
             report_encode(&r, out);
         }
     }
-    if (rak_send_start(a->rak, APP_LORA_PORT, out, REPORT_LEN) != RAK_OK) {
+    const rak_err_t se = rak_send_start(a->rak, APP_LORA_PORT, out, REPORT_LEN);
+    if (se != RAK_OK) {
+        if (no_answer(se)) {
+            a->lora_misses++;
+        }
         return false;
     }
     a->tx_live = true;
     a->tx_seq = seq;
+    a->tx_start_s = a->hw.now_s(a->hw.ctx);
     return true;
 }
 
@@ -224,10 +256,49 @@ static void time_sync(app_t *a, uint32_t now)
 
 static void lora_work(app_t *a, uint32_t now)
 {
-    if (a->rak == NULL || !a->lora_ready) {
+    if (a->rak == NULL) {
+        return;
+    }
+    if (!a->lora_ready) {
+        /* 켤 때 · 리셋 뒤 설정이 안 됐으면 10분마다 다시 (키가 없으면 기록만 쌓음) */
+        if (a->lora_started && a->settings.keys_set && (int32_t)(now - a->next_lora_try_s) >= 0) {
+            if (a->lora_need_reset) {
+                a->lora_restarts++;
+                (void)rak_hw_reset(a->rak);
+            }
+            (void)app_lora_start(a);
+        }
         return;
     }
     rak_poll(a->rak);
+    if (a->rak->joined != a->joined_seen) {
+        a->joined_seen = a->rak->joined;
+        if (a->joined_seen) {
+            a->lora_misses = 0;             /* 가입 소식이 왔으니 모듈은 살아 있음 */
+        }
+    }
+
+    /* 기다리던 소식이 안 옴 → 놓친 것으로 보고 풂 (모듈이 줄 하나를 빠뜨리거나 멈춤) */
+    if (a->tx_live && a->rak->tx_pending && (int32_t)(now - a->tx_start_s) >= (int32_t)APP_TX_TIMEOUT_S) {
+        rak_give_up(a->rak);                /* 아래에서 실패로 세고 링에 "안 보냄"으로 남음 */
+        a->tx_timeouts++;
+        a->lora_misses++;
+        say(a, "LoRa: 송신 끝 소식 없음");
+    }
+    if (a->rak->joining && (int32_t)(now - a->join_start_s) >= (int32_t)APP_JOIN_TIMEOUT_S) {
+        rak_give_up(a->rak);                /* 10분 간격 다시 가입으로 넘어감 */
+        a->lora_misses++;
+        say(a, "LoRa: 가입 결과 소식 없음");
+    }
+    if (a->lora_misses >= APP_LORA_MISS_MAX) {
+        say(a, "LoRa: 연달아 무응답 → 모듈 리셋");
+        a->lora_ready = false;
+        a->lora_need_reset = true;
+        a->timereq_on = false;              /* 리셋 뒤 시각 요청도 다시 */
+        a->next_lora_try_s = now;
+        a->lora_misses = 0;
+        return;
+    }
 
     /* 보내던 것이 끝났나 */
     if (a->tx_live && !a->rak->tx_pending) {
@@ -237,6 +308,7 @@ static void lora_work(app_t *a, uint32_t now)
             ring_mark_sent(a->ring, a->tx_seq);
             flash_on(a, false);
             a->sent++;
+            a->lora_misses = 0;
             time_sync(a, now);
         } else {
             a->send_fail++;          /* 링에 "안 보냄"으로 남아 나중에 다시 보냄 */
@@ -245,8 +317,7 @@ static void lora_work(app_t *a, uint32_t now)
 
     if (!a->rak->joined) {
         if (!a->rak->joining && (int32_t)(now - a->next_join_s) >= 0) {
-            rak_join_start(a->rak);
-            a->next_join_s = now + APP_JOIN_RETRY_S;
+            (void)join(a, now);
         }
         return;
     }

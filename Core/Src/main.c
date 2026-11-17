@@ -24,6 +24,7 @@
 #define FW_VERSION "0.3.0"
 #define BTN_HOLD_ZERO_MS  3000u      /* 버튼 3초 이상 → 영점 */
 
+static void mpu_init(void);
 static void gpio_init(void);
 static HAL_StatusTypeDef lse_start(void);
 
@@ -126,6 +127,7 @@ int main(void)
 {
     SystemCoreClockUpdate();
     HAL_Init();
+    mpu_init();                 /* 캐시를 켜기 전에: 공장 보정값 · EDATA 는 캐시 안 함 */
     HAL_ICACHE_Enable();
 
     gpio_init();
@@ -206,6 +208,39 @@ void HAL_GPIO_EXTI_Falling_Callback(uint16_t pin)
     if (pin == BTN_PIN) {
         s_btn_irq = true;          /* 잠에서 깨움 → 주 루프에서 길게 눌렀는지 봄 */
     }
+}
+
+/* 캐시(ICACHE)를 거치면 안 되는 곳 두 군데를 MPU 로 "캐시 안 함"으로 묶음 (ST 예제 FLASH_EDATA_EraseProgram 과 같은 방식)
+ *   0: 0x08FFF000–0x08FFFFFF  OTP · 읽기 전용 영역 — VREFINT_CAL(배터리) · 플래시 크기(HAL 지우기가 읽음) · UID.
+ *      캐시를 켠 채 읽으면 HardFault (ST 안내). 첫 배터리 측정에서 멈추던 원인.
+ *   1: 0x09000000–0x0901FFFF  EDATA — 쓴 뒤 옛 값 · 줄 단위로 읽다 안 쓴 칸 ECC 오류를 막음 */
+static void mpu_init(void)
+{
+    HAL_MPU_Disable();
+    MPU_Attributes_InitTypeDef at = {0};
+    at.Number = MPU_ATTRIBUTES_NUMBER0;
+    at.Attributes = MPU_NOT_CACHEABLE;
+    HAL_MPU_ConfigMemoryAttributes(&at);
+
+    MPU_Region_InitTypeDef rg = {0};
+    rg.Enable = MPU_REGION_ENABLE;
+    rg.AttributesIndex = MPU_ATTRIBUTES_NUMBER0;
+    rg.DisableExec = MPU_INSTRUCTION_ACCESS_DISABLE;
+    rg.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
+
+    rg.Number = MPU_REGION_NUMBER0;
+    rg.BaseAddress = 0x08FFF000u;
+    rg.LimitAddress = 0x08FFFFFFu;
+    rg.AccessPermission = MPU_REGION_ALL_RO;
+    HAL_MPU_ConfigRegion(&rg);
+
+    rg.Number = MPU_REGION_NUMBER1;
+    rg.BaseAddress = 0x09000000u;
+    rg.LimitAddress = 0x0901FFFFu;
+    rg.AccessPermission = MPU_REGION_ALL_RW;
+    HAL_MPU_ConfigRegion(&rg);
+
+    HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);       /* 나머지 주소는 기본 지도 그대로 */
 }
 
 static void gpio_init(void)

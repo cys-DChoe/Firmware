@@ -1,6 +1,8 @@
 #include <string.h>
 #include "sensors.h"
 
+static double clamp(double x, double lo, double hi) { return x < lo ? lo : (x > hi ? hi : x); }
+
 void sensors_init(sensors_t *s, const i2c_bus_t *bus_dp, const i2c_bus_t *bus_pg, void (*power)(bool on))
 {
     memset(s, 0, sizeof(*s));
@@ -72,6 +74,18 @@ void sensors_read(sensors_t *s, sensors_result_t *r)
         r->sample.t_gas_c = (r->e_pg == SENS_OK) ? a.t_c : h.t_c;
     }
 
-    /* 차압 · 정압이 정상(또는 이전 값)일 때만 사용량 계산에 넣음 */
-    r->usable = (r->e_dp == SENS_OK || r->e_dp == SENS_STALE) && r->e_pg == SENS_OK;
+    /* 센서 범위(출력 10–90 %)를 벗어난 값도 버리지 않고 끝값으로 잘라 씀:
+     *   정압이 0 근처(빈 소화조 · 책상 시험)면 ABP2 가 10 % 아래로 살짝 내려가는데, 버리면 그 초가 통째로 빔.
+     *   차압이 만점을 넘으면(큰 불꽃) 버리면 사용량이 0 으로 빠짐 → 만점으로 세고, 계산 모듈이 '범위 밖' 비트를 켬. */
+    if (r->e_dp == SENS_E_RANGE) {
+        r->sample.dp_raw_pa = clamp(h.p_pa, s->hsc.p_min_pa, s->hsc.p_max_pa);
+        r->clipped = true;
+    }
+    if (r->e_pg == SENS_E_RANGE) {
+        r->sample.pg_pa = clamp(a.p_pa, s->abp2.p_min_pa, s->abp2.p_max_pa);
+        r->clipped = true;
+    }
+    /* 차압 · 정압이 정상(또는 이전 값 · 끝값)일 때 사용량 계산에 넣음. 센서 오류 · 응답 없음만 버림 */
+    r->usable = (r->e_dp == SENS_OK || r->e_dp == SENS_STALE || r->e_dp == SENS_E_RANGE) &&
+                (r->e_pg == SENS_OK || r->e_pg == SENS_E_RANGE);
 }

@@ -31,6 +31,7 @@ typedef struct {
     sens_err_t e_dp, e_pg, e_baro;
     double t_hsc_c, t_abp2_c;       /* 센서 자체 온도 (참고) */
     bool usable;                    /* 차압 · 정압을 믿을 수 있어 meter_step 에 넣어도 됨 */
+    bool clipped;                   /* 차압 · 정압이 센서 범위를 벗어나 끝값으로 자름 */
 } sensors_result_t;
 
 void sensors_init(sensors_t *s, const i2c_bus_t *bus_dp, const i2c_bus_t *bus_pg, void (*power)(bool on));

@@ -109,6 +109,9 @@ rak_err_t rak_wake(rak_t *r);                     /* "AT" 를 최대 3번 — �
 rak_err_t rak_configure(rak_t *r, const rak_cfg_t *c);   /* 다른 값만 씀 (모듈 플래시 아끼기) */
 rak_err_t rak_join_start(rak_t *r);              /* AT+JOIN=1:0:10:8 */
 rak_err_t rak_send_start(rak_t *r, uint8_t port, const uint8_t *data, size_t len);
+/* 기다리던 소식(송신 끝 · 가입 결과)을 놓쳤다고 보고 기다림을 풂 — 제한 시간은 부르는 쪽(app)이 RTC 로 잼
+ * (HAL 틱은 Stop 중 멈춰서 여기서 못 잼) */
+void rak_give_up(rak_t *r);
 rak_err_t rak_set_baud(rak_t *r, uint32_t baud);  /* 모듈에 저장됨 — 부른 뒤 MCU 쪽 속도도 바꿀 것 */
 /* 모듈과 want 속도로 말이 통하게 맞춤 (잠 중에도 받으려면 9600, 설계서 결정 ⑦):
  *   want 로 "AT" → 되면 끝. 안 되면 old(공장값 115200)로 "AT" → AT+BAUD=want → MCU 도 want →

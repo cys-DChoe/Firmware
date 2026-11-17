@@ -65,27 +65,6 @@ void nv_edata_ops(flash_ops_t *ops)
     ops->ctx = NULL;
 }
 
-static void mpu_no_cache(void)
-{
-    /* ICACHE 가 EDATA 를 담아 두면 쓴 뒤 옛 값을 읽거나, 줄 단위로 읽다 안 쓴 칸 ECC 오류를 냄 → 캐시 안 함 (ST 예제와 같음) */
-    HAL_MPU_Disable();
-    MPU_Attributes_InitTypeDef at = {0};
-    at.Number = MPU_ATTRIBUTES_NUMBER0;
-    at.Attributes = MPU_NOT_CACHEABLE;
-    HAL_MPU_ConfigMemoryAttributes(&at);
-    MPU_Region_InitTypeDef rg = {0};
-    rg.Enable = MPU_REGION_ENABLE;
-    rg.Number = MPU_REGION_NUMBER0;
-    rg.BaseAddress = 0x09000000u;
-    rg.LimitAddress = 0x0901FFFFu;
-    rg.AttributesIndex = MPU_ATTRIBUTES_NUMBER0;
-    rg.AccessPermission = MPU_REGION_ALL_RW;
-    rg.DisableExec = MPU_INSTRUCTION_ACCESS_DISABLE;
-    rg.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
-    HAL_MPU_ConfigRegion(&rg);
-    HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
-}
-
 nv_edata_state_t nv_edata_init(void)
 {
     FLASH_OBProgramInitTypeDef ob = {0};
@@ -112,7 +91,7 @@ nv_edata_state_t nv_edata_init(void)
             return NV_EDATA_FAILED;
         }
     }
-    mpu_no_cache();
+    /* 캐시 안 하기(MPU)는 main.c mpu_init() 에서 켜자마자 함 */
     return NV_EDATA_READY;
 }
 

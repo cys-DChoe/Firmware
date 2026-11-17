@@ -476,6 +476,13 @@ rak_err_t rak_send_start(rak_t *r, uint8_t port, const uint8_t *data, size_t len
     return e;
 }
 
+void rak_give_up(rak_t *r)
+{
+    r->tx_pending = false;
+    r->joining = false;
+    r->last_tx = RAK_EV_NONE;
+}
+
 rak_err_t rak_set_baud(rak_t *r, uint32_t baud)
 {
     char s[32];

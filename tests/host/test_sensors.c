@@ -318,6 +318,20 @@ static void test_sensors_read(void)
     near("마지막 기압 사용", r.sample.patm_pa, 103120.336648, 0.05);
     near("온도는 ABP2 것", r.sample.t_gas_c, 25.0, 1e-5);
 
+    printf("범위를 살짝 벗어나면 버리지 않고 끝값으로\n");
+    f.bmp_dead = false;
+    hsc_bytes(f.hsc, 0, 14746 + 200, 768);                                         /* 90 % 넘음 → 1030 Pa 쯤 */
+    abp2_bytes(f.abp2, 0x40, 1677722 - 3000, 6291456);                             /* 10 % 아래 → −1.3 Pa 쯤 */
+    sensors_read(&s, &r);
+    ok("둘 다 범위 밖 오류로 남지만 계산엔 넣음", r.e_dp == SENS_E_RANGE && r.e_pg == SENS_E_RANGE && r.usable && r.clipped);
+    near("차압은 만점 1000 Pa 로", r.sample.dp_raw_pa, 1000.0, 1e-9);
+    near("정압은 0 Pa 로", r.sample.pg_pa, 0.0, 1e-9);
+    hsc_bytes(f.hsc, 0, (uint16_t)(8192 + 32.4 * 13108.0 / 2000.0 + 0.5), 768);
+    abp2_bytes(f.abp2, 0x44, 8388608, 6291456);                                     /* 메모리 검사 실패 */
+    sensors_read(&s, &r);
+    ok("정압 센서 오류(범위 밖 아님)는 그대로 버림", r.e_pg == SENS_E_STATUS && !r.usable && !r.clipped);
+    abp2_bytes(f.abp2, 0x40, 1677722 + (15099494 - 1677722) / 20, 6291456);
+
     printf("차압 센서가 죽으면 계산에 넣지 않음\n");
     f.hsc_dead = true;
     sensors_read(&s, &r);
