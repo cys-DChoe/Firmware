@@ -14,7 +14,7 @@ void NMI_Handler(void)
     wdg_fault(WDG_FAULT_NMI, 0u, 0u);
 }
 
-/* HardFault: 멈춘 곳(PC)과 원인(CFSR)을 백업 칸에 적고 재시작. 디버거가 붙어 있으면 LED2 켜고 멈춤 (wdg.h).
+/* HardFault: 멈춘 곳(PC)과 원인(CFSR)을 백업 칸에 적고 재시작. 디버거가 붙어 있으면 빨강 LED 켜고 멈춤 (wdg.h).
  * 쌓인 레지스터에서 PC 를 꺼내려고 앞부분은 어셈블리 — 예외 직전 스택(MSP/PSP)을 r0 로 넘김. */
 void hardfault_c(const uint32_t *frame)
 {

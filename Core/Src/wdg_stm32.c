@@ -100,7 +100,7 @@ void wdg_healthy(void)
 void wdg_fault(uint32_t code, uint32_t info, uint32_t cfsr)
 {
     __disable_irq();
-    HAL_GPIO_WritePin(LED2_PORT, LED2_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(LED_RED_PORT, LED_RED_PIN, GPIO_PIN_SET);
     if (debugger_on()) {
         while (1) {                 /* 디버거로 보려고 여기 멈춤 (워치독은 디버거가 멈출 때만 멈춤) */
         }

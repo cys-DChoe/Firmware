@@ -120,8 +120,24 @@ static void hw_power_save(void *ctx, bool off)
     }
 }
 
+/* LED 짧게 깜빡: 30 ms 켬 · 150 ms 쉼 (깨어 있을 때라 HAL_Delay 가 됨). 빨강 = 문제, 초록 = 정상 */
+static void hw_led(void *ctx, bool red, uint8_t blinks)
+{
+    (void)ctx;
+    GPIO_TypeDef *port = red ? LED_RED_PORT : LED_GREEN_PORT;
+    const uint16_t pin = red ? LED_RED_PIN : LED_GREEN_PIN;
+    for (uint8_t i = 0; i < blinks; i++) {
+        if (i > 0u) {
+            HAL_Delay(150);
+        }
+        HAL_GPIO_WritePin(port, pin, GPIO_PIN_SET);
+        HAL_Delay(30);
+        HAL_GPIO_WritePin(port, pin, GPIO_PIN_RESET);
+    }
+}
+
 static const app_hw_t HW = {hw_read,   hw_now, hw_time_valid, hw_batt,     hw_flash, hw_log, NULL,
-                            hw_set_time, hw_set_pg_fs, hw_power_save};
+                            hw_set_time, hw_set_pg_fs, hw_power_save, hw_led};
 
 /* 버튼을 누르고 있는 동안 기다려 3초 넘으면 영점 */
 static void button_check(void)
@@ -141,12 +157,13 @@ static void button_check(void)
         if (zeroed) {
             continue;                   /* 손 뗄 때까지 (최대 BTN_STUCK_MS) */
         }
-        HAL_GPIO_WritePin(LED1_PORT, LED1_PIN, GPIO_PIN_SET);
+        HAL_GPIO_WritePin(LED_GREEN_PORT, LED_GREEN_PIN, GPIO_PIN_SET);   /* 누르는 동안 초록 켬 */
         if (held >= BTN_HOLD_ZERO_MS) {
+            HAL_GPIO_WritePin(LED_GREEN_PORT, LED_GREEN_PIN, GPIO_PIN_RESET);
             const bool ok = app_zero(&s_app);
-            /* 영점 잡힘: LED1 세 번, 실패: LED2 */
+            /* 영점 잡힘: 초록 세 번, 실패: 빨강 세 번 */
             for (int i = 0; i < 6; i++) {
-                HAL_GPIO_TogglePin(ok ? LED1_PORT : LED2_PORT, ok ? LED1_PIN : LED2_PIN);
+                HAL_GPIO_TogglePin(ok ? LED_GREEN_PORT : LED_RED_PORT, ok ? LED_GREEN_PIN : LED_RED_PIN);
                 HAL_Delay(150);
             }
             HAL_GPIO_WritePin(LED1_PORT, LED1_PIN, GPIO_PIN_RESET);
@@ -355,6 +372,6 @@ static HAL_StatusTypeDef lse_start(void)
 
 void Error_Handler(void)
 {
-    /* 원인(부른 곳)을 백업 칸에 적고 재시작 — 디버거가 붙어 있으면 LED2 켜고 멈춤 (wdg.h) */
+    /* 원인(부른 곳)을 백업 칸에 적고 재시작 — 디버거가 붙어 있으면 빨강 LED 켜고 멈춤 (wdg.h) */
     wdg_fault(WDG_FAULT_ERROR, (uint32_t)__builtin_return_address(0), 0u);
 }

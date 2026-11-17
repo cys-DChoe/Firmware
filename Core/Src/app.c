@@ -383,9 +383,11 @@ static void lora_work(app_t *a, uint32_t now)
             flash_on(a, false);
             a->sent++;
             a->lora_misses = 0;
+            a->tx_failed = false;
             time_sync(a, now);
         } else {
             a->send_fail++;          /* 링에 "안 보냄"으로 남아 나중에 다시 보냄 */
+            a->tx_failed = true;
         }
     }
 
@@ -470,6 +472,24 @@ static uint32_t batt_off_step(app_t *a, uint32_t now)
     return APP_OFF_TICK_MS;
 }
 
+/* 10 s 마다 상태를 LED 로 한 번 보임 */
+static void led_tick(app_t *a, uint32_t now)
+{
+    if ((int32_t)(now - a->next_led_s) < 0) {
+        return;
+    }
+    a->next_led_s = now + APP_LED_PERIOD_S;
+    const bool lora_bad = !a->settings.keys_set || a->rak == NULL || !a->lora_ready || !a->rak->joined || a->tx_failed;
+    a->led_state = !a->read_ok ? APP_LED_SENSOR : (lora_bad ? APP_LED_LORA : APP_LED_OK);
+    if (a->hw.led != NULL) {
+        if (a->led_state == APP_LED_OK) {
+            a->hw.led(a->hw.ctx, false, 1u);
+        } else {
+            a->hw.led(a->hw.ctx, true, a->led_state);
+        }
+    }
+}
+
 uint32_t app_step(app_t *a)
 {
     const uint32_t now = a->hw.now_s(a->hw.ctx);
@@ -509,6 +529,7 @@ uint32_t app_step(app_t *a)
     }
 
     a->prev_ok = got;
+    a->read_ok = got;
 
     if (lp_minute_due(a->last_minute, now)) {
         a->last_minute = now / 60u;
@@ -518,6 +539,9 @@ uint32_t app_step(app_t *a)
         }
     }
     lora_work(a, now);                  /* 쉬러 가더라도 마지막 보고 송신은 여기서 시작 */
+    if (!a->batt_off) {
+        led_tick(a, now);
+    }
     return a->batt_off ? APP_OFF_TICK_MS : lp_tick_ms(meter_is_flowing(&a->meter));
 }
 

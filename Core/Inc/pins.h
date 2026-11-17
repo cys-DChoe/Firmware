@@ -17,6 +17,11 @@
 #define LED1_PIN         GPIO_PIN_3   /* 13번 · GPIO 출력 — LED1 · 3.3 V */
 #define LED2_PORT        GPIOF
 #define LED2_PIN         GPIO_PIN_4   /* 14번 · GPIO 출력 — LED2 · 3.3 V */
+/* 색 (JLC 부품 위치 파일 PCB3_2): D_LED1 = 빨강 LTST-C190KRKT · 1 kΩ(≈1.4 mA), D_LED2 = 초록 LTST-C190KGKT · 470 Ω(≈2.8 mA) */
+#define LED_RED_PORT     LED1_PORT
+#define LED_RED_PIN      LED1_PIN
+#define LED_GREEN_PORT   LED2_PORT
+#define LED_GREEN_PIN    LED2_PIN
 #define VBAT_ADC_PORT    GPIOA
 #define VBAT_ADC_PIN     GPIO_PIN_0   /* 34번 · ADC12_INP0 — 배터리 전압 ÷2 · 3.3 V */
 #define SPI1_SCK_PORT    GPIOA

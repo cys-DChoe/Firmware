@@ -28,6 +28,7 @@ typedef struct {
     double pg_fs;               /* 앱이 알려 준 정압 센서 만점 */
     bool saving;                /* 셀이 낮아 쉬는 중 (센서 · LED 끔) */
     int save_calls;
+    int led_green, led_red1, led_red2;     /* LED 깜빡임 횟수 (초록 1번 · 빨강 1번 · 빨강 2번) */
     bool time_ok;
     uint16_t batt;
     int flash_on_calls;
@@ -67,7 +68,19 @@ static void b_power_save(void *ctx, bool off)
     b->saving = off;
     b->save_calls++;
 }
-static const app_hw_t HW = {b_read, b_now, b_time, b_batt, b_flash, b_log, &B, b_set_time, b_set_pg_fs, b_power_save};
+static void b_led(void *ctx, bool red, uint8_t blinks)
+{
+    board_t *b = ctx;
+    if (!red) {
+        b->led_green++;
+    } else if (blinks == 1u) {
+        b->led_red1++;
+    } else {
+        b->led_red2++;
+    }
+}
+static void led_zero(void) { B.led_green = B.led_red1 = B.led_red2 = 0; }
+static const app_hw_t HW = {b_read, b_now, b_time, b_batt, b_flash, b_log, &B, b_set_time, b_set_pg_fs, b_power_save, b_led};
 
 static ring_t RING;
 static nvlog_t NS, NC;
@@ -101,6 +114,20 @@ static void idle_gas(void)
     B.s.pg_pa = 600.0;
     B.s.t_gas_c = 25.0;
     B.s.patm_pa = 101000.0;
+}
+
+/* run_for 와 같되, 모듈이 보낼 때마다 '송신 끝'을 알려 주는 가짜 (정상 망) */
+static void run_ack(uint32_t secs)
+{
+    const uint32_t end = B.now + secs;
+    while (B.now < end) {
+        const uint32_t ms = app_step(&A);
+        if (R.tx_pending) {
+            push(&F, "+EVT:TX_DONE\r\n");
+        }
+        B.now += ms / 1000u;
+        F.clock += ms;
+    }
 }
 
 static bool last_report(report_t *r)
@@ -137,6 +164,7 @@ int main(void)
     ok("보고: 정압 600 Pa · 온도 25 °C · 대기압 101000 Pa", r.pg_pa == 600.0 && fabs(r.t_c - 25.0) < 0.05 &&
                                                                 r.patm_pa == 101000.0);
     ok("가스 안 쓸 땐 10초마다 깸", app_step(&A) == 10000u);
+    ok("LED: 키가 없으면 10 s 마다 빨강 1번 (초록 없음)", B.led_red1 >= 18 && B.led_green == 0 && B.led_red2 == 0);
     uint32_t seq;
     ok("세 개 모두 아직 안 보냄", ring_find_unsent(&RING, 60, &seq) == RING_OK && seq == 0);
     {
@@ -301,6 +329,9 @@ int main(void)
         ok("쉬는 동안: 사용량 · 보고 · 기록 그대로 (측정 안 함)", A.meter.total_nm3 == tot && A.reports == reps_off &&
                                                                RING.next_seq == ringn);
         ok("3.40 V 로는 다시 안 켬", A.batt_off && B.saving);
+        led_zero();
+        run_for(5 * 60);
+        ok("LED: 쉬는 동안은 안 깜빡임", B.led_green + B.led_red1 + B.led_red2 == 0);
 
         B.batt = 3500;
         int steps = 0;
@@ -446,6 +477,43 @@ int main(void)
         const uint8_t back[3] = {0x01, 0x00, 0x00};
         ok("0 을 보내면 기본 6000 으로", app_downlink(&A, APP_CFG_PORT, back, 3) && B.pg_fs == 6000.0 &&
                                            app_pg_fs_pa(&A) == 6000u);
+    }
+
+    printf("LED 상태 표시\n");
+    {
+        (void)app_lora_start(&A);
+        push(&F, "+EVT:JOINED\r\n");
+        run_ack(2 * 60);                            /* 보고가 한 번은 제대로 나가게 */
+        led_zero();
+        run_ack(60);
+        ok("가입 · 송신 · 센서 정상 → 10 s 마다 초록 1번만 (1분에 6번)", B.led_green == 6 && B.led_red1 == 0 && B.led_red2 == 0);
+        B.s.dp_raw_pa = 30.0;
+        run_ack(5);
+        led_zero();
+        run_ack(60);
+        ok("조리 중(1 s 깨기)에도 10 s 마다 한 번", B.led_green == 6 && B.led_red1 == 0);
+        idle_gas();
+        run_ack(2 * 60);
+        led_zero();
+        run_for(2 * 60 + 70);                       /* 송신 끝 소식이 안 옴 → 60 s 뒤 실패로 셈 */
+        ok("송신이 실패하면 빨강 1번", B.led_red1 >= 1 && A.led_state == APP_LED_LORA);
+        run_ack(2 * 60);
+        B.sensors_ok = false;
+        led_zero();
+        run_ack(30);
+        ok("센서를 못 읽으면 빨강 2번 (통신보다 먼저)", B.led_red2 >= 2 && B.led_green == 0 && A.led_state == APP_LED_SENSOR);
+        B.sensors_ok = true;
+        R.joined = false;
+        R.joining = true;
+        A.join_start_s = B.now;
+        led_zero();
+        run_for(30);
+        ok("가입이 풀리면 빨강 1번", B.led_red1 >= 2 && B.led_green == 0 && A.led_state == APP_LED_LORA);
+        push(&F, "+EVT:JOINED\r\n");
+        run_ack(2 * 60);
+        led_zero();
+        run_ack(30);
+        ok("다시 가입되고 보내지면 초록으로 돌아옴", B.led_green >= 2 && B.led_red1 == 0 && A.led_state == APP_LED_OK);
     }
 
     printf("\n%d / %d 통과\n", checks - fails, checks);

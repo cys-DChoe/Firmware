@@ -57,6 +57,15 @@
 #define APP_OFF_TICK_MS      20000u  /* 쉬는 동안 깨는 간격 — 워치독(최소 28.6 s)보다 짧게 */
 #define APP_OFF_CHECK_S      600u
 #define APP_OFF_TX_GRACE_S   120u    /* 쉬기 직전 마지막 보고를 보낼 시간 */
+/* LED 상태 표시 (설계서 8번, 11/17): 10 s 마다 짧게 한 번 깜빡 — 늘 켜 두지 않음(평균 수 µA)
+ *   초록 1번 = 정상 (센서 읽힘 · LoRa 가입됨 · 마지막 송신 됨)
+ *   빨강 1번 = 통신 문제 (키 없음 · 모듈 안 됨 · 가입 안 됨 · 마지막 송신 실패)
+ *   빨강 2번 = 센서 문제 (차압 · 정압을 못 읽음) — 통신 문제보다 먼저 보임
+ *   셀이 낮아 쉴 때는 안 깜빡임 */
+#define APP_LED_PERIOD_S     10u
+#define APP_LED_OK           0u
+#define APP_LED_LORA         1u
+#define APP_LED_SENSOR       2u
 
 typedef struct {
     bool (*read)(void *ctx, meter_sample_t *s);   /* 센서 읽기, 믿을 만하면 true */
@@ -69,6 +78,7 @@ typedef struct {
     bool (*set_time)(void *ctx, uint32_t unix_s);  /* RTC 맞추기 (없으면 NULL — 시계 맞추기 안 함) */
     void (*set_pg_fs)(void *ctx, double pa);        /* 정압 센서 만점 바꾸기 (없으면 NULL) */
     void (*power_save)(void *ctx, bool off);        /* 셀 낮아 쉼: 센서 · LED 끄기 / 켜기 (없으면 NULL) */
+    void (*led)(void *ctx, bool red, uint8_t blinks); /* 짧게 깜빡 (없으면 NULL) */
 } app_hw_t;
 
 typedef struct {
@@ -91,6 +101,10 @@ typedef struct {
     bool batt_off_pending;      /* 이번 1분 기록이 마지막 — 저장 뒤 쉼 */
     bool batt_off;              /* 셀이 낮아 쉬는 중 */
     uint32_t off_since, next_batt_check_s;
+    bool read_ok;               /* 마지막 센서 읽기가 쓸 만했나 */
+    bool tx_failed;             /* 마지막 송신이 실패함 (다음 성공까지) */
+    uint32_t next_led_s;
+    uint8_t led_state;          /* 마지막으로 보인 APP_LED_* */
     bool fresh_pending;         /* 방금 만든 보고를 아직 안 보냄 */
     uint32_t fresh_seq;
     bool tx_live;               /* 모듈이 보내는 중인 기록 */
