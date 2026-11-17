@@ -120,8 +120,53 @@ bool app_downlink(app_t *a, uint8_t port, const uint8_t *d, uint8_t len)
         say(a, ok ? "설정: 정압 만점 바꿈" : "설정: 정압 만점 바꿈 (저장 실패 — 다시 켜면 옛 값)");
         return true;
     }
+    if (d[0] == APP_CFG_LTE_TEST && len == 1u) {
+        (void)app_lte_test(a);
+        return true;
+    }
     say(a, "설정: 모르는 명령");
     return false;
+}
+
+void app_set_lte(app_t *a, lte_t *lte)
+{
+    a->lte = lte;
+}
+
+bool app_lte_test(app_t *a)
+{
+    if (a->lte == NULL || lte_busy(a->lte) || a->batt_off) {
+        return false;
+    }
+    const uint16_t mv = a->hw.batt_mv != NULL ? a->hw.batt_mv(a->hw.ctx) : 0u;
+    if (mv < APP_LTE_MIN_MV) {
+        a->lte_refused++;
+        say(a, "LTE: 셀이 3.65 V 아래 — 시험 안 함");
+        return false;
+    }
+    say(a, "LTE: 켜기 시작");
+    return lte_start(a->lte, a->hw.now_s(a->hw.ctx));
+}
+
+/* LTE 시험을 한 칸 진행. 끝났으면 결과를 남기고 LoRa 로 올릴 차례로 */
+static void lte_work(app_t *a, uint32_t now, bool report)
+{
+    if (a->lte == NULL) {
+        return;
+    }
+    if (lte_busy(a->lte)) {
+        (void)lte_step(a->lte, now);
+    }
+    if (a->lte->done) {
+        a->lte->done = false;
+        a->lte_last = a->lte->res;
+        a->lte_report_pending = report;
+        char m[96];
+        snprintf(m, sizeof(m), "LTE: %s · 신호 %u · %s · %u s%s", lte_code_name(a->lte_last.code),
+                 (unsigned)a->lte_last.csq, a->lte_last.oper, (unsigned)a->lte_last.secs,
+                 a->lte_last.off == LTE_OFF_FAILED ? " · 못 끔!" : "");
+        say(a, m);
+    }
 }
 
 void app_set_boot(app_t *a, bool abnormal)
@@ -377,10 +422,14 @@ static void lora_work(app_t *a, uint32_t now)
     /* 보내던 것이 끝났나 */
     if (a->tx_live && !a->rak->tx_pending) {
         a->tx_live = false;
+        const bool was_lte = a->tx_is_lte;
+        a->tx_is_lte = false;
         if (a->rak->last_tx == RAK_EV_TX_DONE || a->rak->last_tx == RAK_EV_CONFIRMED_OK) {
-            flash_on(a, true);
-            ring_mark_sent(a->ring, a->tx_seq);
-            flash_on(a, false);
+            if (!was_lte) {
+                flash_on(a, true);
+                ring_mark_sent(a->ring, a->tx_seq);
+                flash_on(a, false);
+            }
             a->sent++;
             a->lora_misses = 0;
             a->tx_failed = false;
@@ -407,6 +456,20 @@ static void lora_work(app_t *a, uint32_t now)
         a->fresh_pending = false;           /* 실패해도 링에 남아 다시 보내기로 감 */
         send_seq(a, a->fresh_seq, false);
         a->next_resend_s = now + APP_RESEND_GAP_S;
+        return;
+    }
+    if (a->lte_report_pending) {
+        uint8_t b[7];
+        const size_t n = lte_result_encode(&a->lte_last, b);
+        const rak_err_t se = rak_send_start(a->rak, APP_LTE_PORT, b, n);
+        if (se == RAK_OK) {
+            a->lte_report_pending = false;
+            a->tx_live = true;
+            a->tx_is_lte = true;
+            a->tx_start_s = now;
+        } else if (no_answer(se)) {
+            a->lora_misses++;
+        }
         return;
     }
     if ((int32_t)(now - a->next_resend_s) >= 0) {
@@ -436,6 +499,9 @@ static void batt_off_enter(app_t *a, uint32_t now)
     a->batt_offs++;
     a->off_since = now;
     a->next_batt_check_s = now + APP_OFF_CHECK_S;
+    if (a->lte != NULL) {
+        lte_stop(a->lte);                   /* 켜져 있으면 먼저 끔 (펌웨어 주의 2절) — 쉬는 동안에도 끝까지 진행 */
+    }
     power_save(a, true);
     say(a, "전원: 셀 낮음 → 측정 · 보고 멈춤");
 }
@@ -457,6 +523,12 @@ static void batt_off_leave(app_t *a, uint32_t now, uint16_t mv)
 static uint32_t batt_off_step(app_t *a, uint32_t now)
 {
     a->last_s = now;
+    if (a->lte != NULL && (lte_busy(a->lte) || a->lte->done)) {
+        lte_work(a, now, false);
+        if (lte_busy(a->lte)) {
+            return 1000u;                   /* LTE 를 다 끌 때까지는 1 s 마다 */
+        }
+    }
     if ((int32_t)(now - a->off_since) < (int32_t)APP_OFF_TX_GRACE_S && a->rak != NULL && a->lora_ready &&
         a->rak->joined && (a->fresh_pending || a->tx_live)) {
         lora_work(a, now);
@@ -539,8 +611,12 @@ uint32_t app_step(app_t *a)
         }
     }
     lora_work(a, now);                  /* 쉬러 가더라도 마지막 보고 송신은 여기서 시작 */
+    lte_work(a, now, true);
     if (!a->batt_off) {
         led_tick(a, now);
+    }
+    if (a->lte != NULL && lte_busy(a->lte)) {
+        return 1000u;                       /* LTE 단계는 1 s 마다 */
     }
     return a->batt_off ? APP_OFF_TICK_MS : lp_tick_ms(meter_is_flowing(&a->meter));
 }

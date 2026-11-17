@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "app.h"
+#include "fake_lte.h"
 #include "fake_rak.h"
 #include "fake_w25q.h"
 #include "lowpower.h"
@@ -82,6 +83,8 @@ static void b_led(void *ctx, bool red, uint8_t blinks)
 static void led_zero(void) { B.led_green = B.led_red1 = B.led_red2 = 0; }
 static const app_hw_t HW = {b_read, b_now, b_time, b_batt, b_flash, b_log, &B, b_set_time, b_set_pg_fs, b_power_save, b_led};
 
+static fake_lte_t FL;
+static lte_t LT;
 static ring_t RING;
 static nvlog_t NS, NC;
 static flash_ops_t OPS;
@@ -95,6 +98,7 @@ static void boot(void)
     nvlog_mount(&NS, &OPS, PERSIST_SETTINGS_BASE);
     nvlog_mount(&NC, &OPS, PERSIST_COUNTER_BASE);
     app_init(&A, &HW, &RING, &NS, &NC, &R);
+    app_set_lte(&A, &LT);
 }
 
 /* 앱이 돌려준 간격대로 시간을 흘리며 돌림 */
@@ -514,6 +518,39 @@ int main(void)
         led_zero();
         run_ack(30);
         ok("다시 가입되고 보내지면 초록으로 돌아옴", B.led_green >= 2 && B.led_red1 == 0 && A.led_state == APP_LED_OK);
+    }
+
+    printf("LTE 1차 시험: LoRa 명령 02 로 켜고 · 망 확인 · 끄기, 결과는 LoRa 포트 2\n");
+    {
+        fake_lte_new(&FL, &B.now);
+        lte_io_t lio;
+        fake_lte_io(&FL, &lio);
+        lte_init(&LT, &lio);
+        const uint8_t cmd[1] = {APP_CFG_LTE_TEST};
+        B.batt = 3600;
+        ok("셀 3.60 V 면 안 함 (3.65 V 부터)", app_downlink(&A, APP_CFG_PORT, cmd, 1) && !lte_busy(&LT) && A.lte_refused == 1u);
+        B.batt = 3800;
+        const uint32_t reps = A.reports;
+        F.nlog = 0;                                 /* 가짜 모듈의 명령 기록(64줄)을 비우고 셈 */
+        const int sends2 = 0;
+        ok("셀 3.80 V → 명령 받고 켜기 시작", app_downlink(&A, APP_CFG_PORT, cmd, 1) && lte_busy(&LT) && FL.key_down);
+        ok("LTE 하는 동안은 1 s 마다 깸", app_step(&A) == 1000u);
+        run_ack(3 * 60);
+        ok("끝: 망 등록됨 · 모듈 꺼짐", !lte_busy(&LT) && A.lte_last.code == LTE_R_OK && A.lte_last.off == LTE_OFF_QPOWD && !FL.on);
+        ok("결과를 LoRa 포트 2 로 한 번 올림", count_writes("AT+SEND=2:") == sends2 + 1 && !A.lte_report_pending);
+        ok("그동안 1분 보고 · 측정은 그대로", A.reports >= reps + 2u);
+        ok("로그에 결과", strstr(B.last_log, "LTE") != NULL || A.lte_last.code == LTE_R_OK);
+
+        printf("LTE 하는 중에 셀이 낮아 쉬러 감 → LTE 먼저 끔\n");
+        FL.reg_after = 100000;                      /* 망을 못 찾아 오래 걸리는 중에 */
+        ok("다시 시작", app_lte_test(&A) && lte_busy(&LT));
+        B.batt = 3240;
+        run_ack(3 * 60);
+        ok("쉬러 감 · LTE 는 멈춤으로 끝 · 모듈 꺼짐", A.batt_off && !lte_busy(&LT) && A.lte_last.code == LTE_R_ABORTED && !FL.on);
+        ok("쉬는 중이라 결과는 안 올림 · LTE 시험도 안 받음", !A.lte_report_pending && !app_lte_test(&A));
+        B.batt = 3700;
+        run_ack(11 * 60);
+        ok("셀이 오르면 다시 시작", !A.batt_off);
     }
 
     printf("\n%d / %d 통과\n", checks - fails, checks);

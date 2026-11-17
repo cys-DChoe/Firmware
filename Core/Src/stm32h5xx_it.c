@@ -1,6 +1,7 @@
 /* 예외 · 인터럽트 처리 */
 #include "main.h"
 #include "lora_uart_stm32.h"
+#include "lte_uart_stm32.h"
 #include "lowpower_stm32.h"
 #include "nv_edata.h"
 #include "wdg.h"
@@ -48,6 +49,11 @@ void SysTick_Handler(void)
 void LPUART1_IRQHandler(void)
 {
     lora_uart_irq(&g_lora_uart);
+}
+
+void USART6_IRQHandler(void)
+{
+    lte_uart_irq(&g_lte_uart);
 }
 
 void RTC_IRQHandler(void)

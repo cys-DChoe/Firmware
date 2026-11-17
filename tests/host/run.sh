@@ -37,10 +37,14 @@ cc $CFLAGS -o "$OUT/test_nvlog" Core/Src/w25q.c Core/Src/ring.c Core/Src/nvlog.c
    tests/host/fake_w25q.c tests/host/test_nvlog.c -lm
 "$OUT/test_nvlog"
 
+echo "\n== LTE 켜기 · 망 확인 · 끄기 (EG915U)"
+cc $CFLAGS -Itests/host -o "$OUT/test_lte" Core/Src/lte.c tests/host/fake_lte.c tests/host/test_lte.c
+"$OUT/test_lte"
+
 echo "\n== 전체 흐름 (센서 → 계산 → 저장 → LoRa)"
-cc $CFLAGS -o "$OUT/test_app" Core/Src/app.c Core/Src/meter.c Core/Src/report.c Core/Src/ring.c Core/Src/w25q.c \
-   Core/Src/nvlog.c Core/Src/persist.c Core/Src/nv_w25q.c Core/Src/rak3172.c Core/Src/lowpower.c \
-   tests/host/fake_w25q.c tests/host/fake_rak.c tests/host/test_app.c -lm
+cc $CFLAGS -Itests/host -o "$OUT/test_app" Core/Src/app.c Core/Src/meter.c Core/Src/report.c Core/Src/ring.c Core/Src/w25q.c \
+   Core/Src/nvlog.c Core/Src/persist.c Core/Src/nv_w25q.c Core/Src/rak3172.c Core/Src/lowpower.c Core/Src/lte.c \
+   tests/host/fake_w25q.c tests/host/fake_rak.c tests/host/fake_lte.c tests/host/test_app.c -lm
 "$OUT/test_app"
 
 echo "\n== 셀 전압 계산"

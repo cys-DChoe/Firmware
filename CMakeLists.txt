@@ -69,6 +69,8 @@ add_executable(${PROJECT_NAME}.elf
   Core/Src/app.c
   Core/Src/batt.c
   Core/Src/wdg_stm32.c
+  Core/Src/lte.c
+  Core/Src/lte_uart_stm32.c
   Core/Src/batt_stm32.c
   Core/Src/log.c
   Core/Src/syscalls.c
@@ -80,6 +82,10 @@ add_executable(${PROJECT_NAME}.elf
 )
 
 target_compile_definitions(${PROJECT_NAME}.elf PRIVATE STM32H563xx USE_HAL_DRIVER)
+option(LTE_TEST_AT_BOOT "켤 때 LTE 시험을 한 번 함 (벤치용)" OFF)
+if(LTE_TEST_AT_BOOT)
+  target_compile_definitions(${PROJECT_NAME}.elf PRIVATE LTE_TEST_AT_BOOT)
+endif()
 target_include_directories(${PROJECT_NAME}.elf PRIVATE
   Core/Inc
   ${DEV}/Include

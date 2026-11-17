@@ -12,6 +12,7 @@
 #include "i2c_stm32.h"
 #include "log.h"
 #include "lora_uart_stm32.h"
+#include "lte_uart_stm32.h"
 #include "lowpower.h"
 #include "lowpower_stm32.h"
 #include "nv_edata.h"
@@ -38,6 +39,7 @@ static ring_t s_ring;
 static flash_ops_t s_nv_ops;
 static nvlog_t s_nv_set, s_nv_ctr;
 static rak_t s_rak;
+static lte_t s_lte;
 static app_t s_app;
 static volatile bool s_btn_irq;
 
@@ -257,6 +259,15 @@ int main(void)
     rak_init(&s_rak, &g_lora_uart.io);
     wdg_kick();
     printf("LoRa: %d\n", (int)app_lora_start(&s_app));
+
+    /* LTE (1차: 켜고 · 망 확인 · 끄기만). 평소엔 꺼 둠 — LoRa 명령 02 로 한 번 시험.
+     * 벤치에서 서버 없이 볼 때는 -DLTE_TEST_AT_BOOT=ON 으로 빌드하면 켤 때 한 번 함 (셀 3.65 V 이상일 때) */
+    lte_board_init(&g_lte_uart);
+    lte_init(&s_lte, &g_lte_uart.io);
+    app_set_lte(&s_app, &s_lte);
+#ifdef LTE_TEST_AT_BOOT
+    printf("LTE 시험: %s\n", app_lte_test(&s_app) ? "시작" : "안 함");
+#endif
     hw_flash(NULL, false);
 
     /* 6) 깨고 · 재고 · 저장하고 · 보내고 · 자기 — 깰 때마다(1 · 10 s) 워치독을 밀어 줌 */
