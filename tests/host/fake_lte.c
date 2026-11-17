@@ -9,6 +9,7 @@ void fake_lte_new(fake_lte_t *f, uint32_t *now)
     f->sim = true;
     f->reg_after = 20;
     f->reg_stat = 1;
+    f->qpowd_delay = 3;
 }
 
 static uint32_t T(fake_lte_t *f) { return *f->now; }
@@ -17,8 +18,11 @@ static void tick(fake_lte_t *f)
 {
     if (f->on && f->off_at != 0u && T(f) >= f->off_at) {
         f->on = false;
-        f->off_at = 0;
         f->io = false;
+        if (f->key_down) {
+            f->key_t = f->off_at;       /* 꺼진 뒤에도 눌려 있으면 그때부터 '켜기 누름'으로 셈 (2 s 넘으면 다시 켜짐) */
+        }
+        f->off_at = 0;
     }
 }
 
@@ -54,7 +58,7 @@ static void handle(fake_lte_t *f, const char *c)
     } else if (strcmp(c, "AT+QPOWD=1") == 0) {
         say(f, "\r\nOK\r\n");
         if (!f->qpowd_ignored) {
-            f->off_at = T(f) + 3u;
+            f->off_at = T(f) + f->qpowd_delay;
         }
     } else {
         say(f, "\r\nERROR\r\n");

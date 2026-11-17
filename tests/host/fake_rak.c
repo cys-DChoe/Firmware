@@ -161,6 +161,7 @@ int fk_getc(void *ctx)
 {
     fake_t *f = ctx;
     if (f->head == f->tail) {
+        f->head = f->tail = 0;      /* 다 읽었으면 처음부터 다시 씀 (긴 시험에서 줄 버퍼가 넘치지 않게) */
         f->clock++;                 /* 받을 게 없으면 1 ms 흐름 */
         return -1;
     }

@@ -150,6 +150,12 @@ int main(void)
     chip_new();
     fresh();
     memset(&B, 0, sizeof(B));
+    {
+        fake_lte_new(&FL, &B.now);          /* 가짜 LTE 모듈: 처음엔 꺼져 있음 */
+        lte_io_t lio0;
+        fake_lte_io(&FL, &lio0);
+        lte_init(&LT, &lio0);
+    }
     B.now = 1794819600u + 5u;    /* 분 경계 5초 뒤 */
     B.sensors_ok = true;
     B.batt = 3700;
@@ -528,13 +534,14 @@ int main(void)
         lte_init(&LT, &lio);
         const uint8_t cmd[1] = {APP_CFG_LTE_TEST};
         B.batt = 3600;
-        ok("셀 3.60 V 면 안 함 (3.65 V 부터)", app_downlink(&A, APP_CFG_PORT, cmd, 1) && !lte_busy(&LT) && A.lte_refused == 1u);
+        ok("셀 3.60 V 면 안 함 (3.65 V 부터)", app_downlink(&A, APP_CFG_PORT, cmd, 1) && !lte_busy(&LT) && !A.lte_want &&
+                                                 A.lte_refused == 1u);
         B.batt = 3800;
         const uint32_t reps = A.reports;
         F.nlog = 0;                                 /* 가짜 모듈의 명령 기록(64줄)을 비우고 셈 */
         const int sends2 = 0;
-        ok("셀 3.80 V → 명령 받고 켜기 시작", app_downlink(&A, APP_CFG_PORT, cmd, 1) && lte_busy(&LT) && FL.key_down);
-        ok("LTE 하는 동안은 1 s 마다 깸", app_step(&A) == 1000u);
+        ok("셀 3.80 V → 명령 받음", app_downlink(&A, APP_CFG_PORT, cmd, 1) && A.lte_want);
+        ok("다음 걸음에 켜기 시작 · 그동안 1 s 마다 깸", app_step(&A) == 1000u && lte_busy(&LT) && FL.key_down);
         run_ack(3 * 60);
         ok("끝: 망 등록됨 · 모듈 꺼짐", !lte_busy(&LT) && A.lte_last.code == LTE_R_OK && A.lte_last.off == LTE_OFF_QPOWD && !FL.on);
         ok("결과를 LoRa 포트 2 로 한 번 올림", count_writes("AT+SEND=2:") == sends2 + 1 && !A.lte_report_pending);
@@ -543,7 +550,7 @@ int main(void)
 
         printf("LTE 하는 중에 셀이 낮아 쉬러 감 → LTE 먼저 끔\n");
         FL.reg_after = 100000;                      /* 망을 못 찾아 오래 걸리는 중에 */
-        ok("다시 시작", app_lte_test(&A) && lte_busy(&LT));
+        ok("다시 시작", app_lte_test(&A) && app_step(&A) == 1000u && lte_busy(&LT));
         B.batt = 3240;
         run_ack(3 * 60);
         ok("쉬러 감 · LTE 는 멈춤으로 끝 · 모듈 꺼짐", A.batt_off && !lte_busy(&LT) && A.lte_last.code == LTE_R_ABORTED && !FL.on);
@@ -551,6 +558,58 @@ int main(void)
         B.batt = 3700;
         run_ack(11 * 60);
         ok("셀이 오르면 다시 시작", !A.batt_off);
+    }
+
+    printf("LTE 로 망을 찾는 중에 시계가 뜀 (망 시각으로 맞춤) → LTE 는 안 흔들림\n");
+    {
+        fake_lte_new(&FL, &B.now);
+        lte_io_t lio;
+        fake_lte_io(&FL, &lio);
+        lte_init(&LT, &lio);
+        FL.reg_after = 60;                          /* 켜진 뒤 60 s 에 등록 */
+        ok("시험 시작", app_lte_test(&A) && app_step(&A) == 1000u && lte_busy(&LT));
+        run_ack(30);
+        ok("망 찾는 중", LT.state == LTE_S_REG);
+        const uint32_t jump = 5u * 3600u;           /* RTC 가 5시간 앞으로 */
+        B.now += jump;
+        A.last_s += jump;                           /* 앱의 시계 맞춤이 하는 일 (time_sync) */
+        A.last_minute = B.now / 60u;
+        FL.boot_t += jump;                          /* 모듈은 실제 시간으로 삶 */
+        run_ack(5);
+        ok("시계가 뛰어도 계속 망을 찾음 (전엔 바로 '등록 안 됨')", lte_busy(&LT) && LT.state == LTE_S_REG);
+        run_ack(3 * 60);
+        ok("끝: 망 등록됨 · 꺼짐", !lte_busy(&LT) && A.lte_last.code == LTE_R_OK && !FL.on);
+    }
+
+    printf("MCU 만 다시 켜졌는데 LTE 는 켜져 있음 → 켜자마자 끔\n");
+    {
+        fake_lte_new(&FL, &B.now);
+        lte_io_t lio;
+        fake_lte_io(&FL, &lio);
+        lte_init(&LT, &lio);
+        FL.on = true;
+        FL.boot_t = B.now - 100u;
+        boot();                                     /* 워치독 · 오류 재시작처럼 */
+        (void)app_lora_start(&A);
+        push(&F, "+EVT:JOINED\r\n");
+        F.nlog = 0;
+        run_ack(2 * 60);
+        ok("켜진 걸 알아채고 끔", A.lte_left_on == 1u && !FL.on && A.lte_last.code == LTE_R_LEFT_ON);
+        ok("서버에도 알림 (LoRa 포트 2)", count_writes("AT+SEND=2:") == 1);
+
+        FL.on = true;                               /* 이번엔 끄기가 안 먹는 모듈 */
+        FL.boot_t = B.now - 100u;
+        FL.key_off_ignored = true;
+        const uint32_t t_wait = B.now;
+        while (A.lte_left_on < 2u && B.now - t_wait < 11u * 60u) {
+            run_ack(10);                            /* 다음 살핌(10분 안)을 기다림 */
+        }
+        run_ack(3 * 60);                            /* 끄기 절차(누름 · 기다림 · 리셋 · 다시 누름)가 끝날 때까지 */
+        ok("10분 안에 다시 알아채고, 못 끄면 '못 끔'으로 남김", A.lte_left_on == 2u && !lte_busy(&LT) &&
+                                                             A.lte_last.off == LTE_OFF_FAILED && FL.on);
+        FL.key_off_ignored = false;
+        run_ack(11 * 60);
+        ok("10분 뒤 다시 해서 끔", A.lte_left_on == 3u && !FL.on && A.lte_last.off != LTE_OFF_FAILED);
     }
 
     printf("\n%d / %d 통과\n", checks - fails, checks);

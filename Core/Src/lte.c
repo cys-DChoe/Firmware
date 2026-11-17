@@ -93,18 +93,33 @@ int lte_cmd(lte_t *l, const char *cmd, const char *want, char *val, size_t val_l
 
 /* ---------- 단계 ---------- */
 
-bool lte_start(lte_t *l, uint32_t now)
+static void begin(lte_t *l, uint32_t now)
 {
-    if (lte_busy(l)) {
-        return false;
-    }
     memset(&l->res, 0, sizeof(l->res));
     l->res.csq = 99;
     l->res.code = LTE_R_OK;
     l->abort = l->reset_done = l->done = false;
     l->off_way = LTE_OFF_NONE;
     l->t_start = now;
+}
+
+bool lte_is_on(const lte_t *l)
+{
+    return l->io.status != NULL && l->io.status(l->io.ctx);   /* lte_init 전이면 꺼진 것으로 */
+}
+
+bool lte_start(lte_t *l, uint32_t now)
+{
+    if (lte_busy(l)) {
+        return false;
+    }
+    begin(l, now);
     l->tests++;
+    if (lte_is_on(l)) {
+        l->off_way = LTE_OFF_FAILED;            /* 이미 켜져 있음 — 누르면 꺼지므로 누르지 않음 */
+        go(l, LTE_S_IO, now);
+        return true;
+    }
     l->io.pwrkey(l->io.ctx, true);
     go(l, LTE_S_PRESS, now);
     return true;
@@ -129,6 +144,18 @@ static void key_off(lte_t *l, uint32_t now)
     l->io.io_on(l->io.ctx, false);              /* 1.8 V 핀을 아날로그로 — 꺼지는 모듈 쪽으로 전압을 안 냄 */
     l->io.pwrkey(l->io.ctx, true);
     go(l, LTE_S_KEY_OFF, now);
+}
+
+bool lte_off_start(lte_t *l, uint32_t now)
+{
+    if (lte_busy(l) || !lte_is_on(l)) {
+        return false;
+    }
+    begin(l, now);
+    l->res.code = LTE_R_LEFT_ON;
+    l->off_way = LTE_OFF_FAILED;
+    key_off(l, now);
+    return true;
 }
 
 static void finish(lte_t *l, uint32_t now)
@@ -268,7 +295,15 @@ bool lte_step(lte_t *l, uint32_t now)
         break;
 
     case LTE_S_KEY_OFF:
-        if (since(l, now) >= LTE_KEY_OFF_S) {
+        if (!l->io.status(l->io.ctx)) {
+            /* 누르는 동안 이미 꺼짐(앞선 AT+QPOWD 가 늦게 먹음 등) → 바로 놓음.
+             * 꺼진 모듈에 2 s 넘게 눌려 있으면 다시 켜지기 때문 */
+            l->io.pwrkey(l->io.ctx, false);
+            if (l->off_way == LTE_OFF_FAILED) {
+                l->off_way = LTE_OFF_KEY;
+            }
+            finish(l, now);
+        } else if (since(l, now) >= LTE_KEY_OFF_S) {
             l->io.pwrkey(l->io.ctx, false);
             if (l->off_way != LTE_OFF_RESET) {
                 l->off_way = LTE_OFF_KEY;
@@ -314,6 +349,7 @@ const char *lte_code_name(lte_code_t c)
     case LTE_R_NO_SIM:   return "유심 없음";
     case LTE_R_NO_NET:   return "망 등록 안 됨";
     case LTE_R_ABORTED:  return "중간에 멈춤";
+    case LTE_R_LEFT_ON:  return "켜져 있어서 끔";
     default:             return "모름";
     }
 }

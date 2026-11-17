@@ -135,7 +135,7 @@ void app_set_lte(app_t *a, lte_t *lte)
 
 bool app_lte_test(app_t *a)
 {
-    if (a->lte == NULL || lte_busy(a->lte) || a->batt_off) {
+    if (a->lte == NULL || lte_busy(a->lte) || a->lte_want || a->batt_off) {
         return false;
     }
     const uint16_t mv = a->hw.batt_mv != NULL ? a->hw.batt_mv(a->hw.ctx) : 0u;
@@ -145,14 +145,30 @@ bool app_lte_test(app_t *a)
         return false;
     }
     say(a, "LTE: 켜기 시작");
-    return lte_start(a->lte, a->hw.now_s(a->hw.ctx));
+    a->lte_want = true;                     /* lte_work 가 그때의 up_s 로 시작 (여기서 부르면 up_s 가 한 걸음 낡았을 수 있음) */
+    return true;
 }
 
-/* LTE 시험을 한 칸 진행. 끝났으면 결과를 남기고 LoRa 로 올릴 차례로 */
-static void lte_work(app_t *a, uint32_t now, bool report)
+/* LTE 시험을 한 칸 진행. 끝났으면 결과를 남기고 LoRa 로 올릴 차례로.
+ * 시간은 up_s(안 뛰는 초)로 — RTC 시각을 쓰면 시계 맞출 때 기다림이 한꺼번에 끝남 */
+static void lte_work(app_t *a, bool report)
 {
     if (a->lte == NULL) {
         return;
+    }
+    const uint32_t now = a->up_s;
+    if (a->lte_want && !lte_busy(a->lte)) {
+        a->lte_want = false;
+        (void)lte_start(a->lte, now);
+    }
+    if (!lte_busy(a->lte) && !a->lte->done && (int32_t)(now - a->next_lte_guard) >= 0) {
+        /* 켤 때 한 번 + 10분마다: 시키지 않았는데 켜져 있으면 끔
+         * (워치독 · 오류로 MCU 만 다시 켜진 뒤, 또는 지난번에 못 껐을 때 — 켜진 채면 12.5 mA 가 계속 흐름) */
+        a->next_lte_guard = now + APP_LTE_GUARD_S;
+        if (lte_off_start(a->lte, now)) {
+            a->lte_left_on++;
+            say(a, "LTE: 켜져 있음 → 끔");
+        }
     }
     if (lte_busy(a->lte)) {
         (void)lte_step(a->lte, now);
@@ -499,6 +515,7 @@ static void batt_off_enter(app_t *a, uint32_t now)
     a->batt_offs++;
     a->off_since = now;
     a->next_batt_check_s = now + APP_OFF_CHECK_S;
+    a->lte_want = false;
     if (a->lte != NULL) {
         lte_stop(a->lte);                   /* 켜져 있으면 먼저 끔 (펌웨어 주의 2절) — 쉬는 동안에도 끝까지 진행 */
     }
@@ -522,9 +539,11 @@ static void batt_off_leave(app_t *a, uint32_t now, uint16_t mv)
 /* 쉬는 동안: 마지막 보고만 마저 보내고, 10분마다 셀을 잼 */
 static uint32_t batt_off_step(app_t *a, uint32_t now)
 {
+    uint32_t dt = now - a->last_s;
     a->last_s = now;
-    if (a->lte != NULL && (lte_busy(a->lte) || a->lte->done)) {
-        lte_work(a, now, false);
+    a->up_s += ((int32_t)dt < 0) ? 0u : (dt > APP_MAX_DT_S ? APP_MAX_DT_S : dt);
+    if (a->lte != NULL) {
+        lte_work(a, false);
         if (lte_busy(a->lte)) {
             return 1000u;                   /* LTE 를 다 끌 때까지는 1 s 마다 */
         }
@@ -580,6 +599,7 @@ uint32_t app_step(app_t *a)
     } else if (dt > APP_MAX_DT_S) {
         dt = APP_MAX_DT_S;
     }
+    a->up_s += dt;
 
     meter_sample_t s;
     const bool got = a->hw.read(a->hw.ctx, &s);
@@ -611,11 +631,11 @@ uint32_t app_step(app_t *a)
         }
     }
     lora_work(a, now);                  /* 쉬러 가더라도 마지막 보고 송신은 여기서 시작 */
-    lte_work(a, now, true);
+    lte_work(a, true);
     if (!a->batt_off) {
         led_tick(a, now);
     }
-    if (a->lte != NULL && lte_busy(a->lte)) {
+    if (a->lte != NULL && (lte_busy(a->lte) || a->lte_want)) {
         return 1000u;                       /* LTE 단계는 1 s 마다 */
     }
     return a->batt_off ? APP_OFF_TICK_MS : lp_tick_ms(meter_is_flowing(&a->meter));

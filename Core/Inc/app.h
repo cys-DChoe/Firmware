@@ -37,6 +37,7 @@
  * 결과는 LoRa 포트 2 로 7 바이트 (lte_result_encode) — 1분 보고 링에는 안 넣음 */
 #define APP_LTE_PORT         2u
 #define APP_LTE_MIN_MV       3650u
+#define APP_LTE_GUARD_S       600u    /* 시키지 않았는데 LTE 가 켜져 있는지 보는 간격 (켤 때 한 번 + 10분마다) */
 #define APP_PG_FS_DEFAULT_PA 6000u   /* ABP2DRNT006KG2A3XX (보드 U-S2) */
 #define APP_PG_FS_MIN_PA     1000u
 #define APP_PG_FS_MAX_PA     40000u
@@ -98,6 +99,7 @@ typedef struct {
     bool lora_ready;            /* 속도 · 설정까지 끝남 */
     bool started;
     uint32_t last_s;            /* 지난 app_step 시각 */
+    uint32_t up_s;              /* 켜진 뒤 흐른 초 — RTC 를 맞춰도 안 뜀 (LTE 단계가 이걸로 잼) */
     meter_sample_t prev;        /* 지난 측정값 — 간격이 길 때 반씩 나눠 적산 */
     bool prev_ok;
     uint32_t last_minute;       /* 마지막으로 보고 만든 분 번호 (Unix 초 / 60) */
@@ -112,10 +114,13 @@ typedef struct {
     uint32_t next_led_s;
     uint8_t led_state;          /* 마지막으로 보인 APP_LED_* */
     lte_t *lte;                 /* 없으면 NULL */
+    bool lte_want;              /* LTE 시험을 받아 둠 — 다음 app_step 에서 시작 (그때의 up_s 로 재려고) */
     bool lte_report_pending;    /* LTE 시험 결과를 LoRa 로 올릴 차례 */
     bool tx_is_lte;             /* 지금 보내는 것이 LTE 결과 (링 기록 아님) */
     lte_result_t lte_last;
     uint32_t lte_refused;       /* 셀이 낮아 안 한 횟수 */
+    uint32_t next_lte_guard;    /* up_s 기준 */
+    uint32_t lte_left_on;       /* 켜진 채 발견해서 끈 횟수 */
     bool fresh_pending;         /* 방금 만든 보고를 아직 안 보냄 */
     uint32_t fresh_seq;
     bool tx_live;               /* 모듈이 보내는 중인 기록 */
@@ -152,7 +157,7 @@ void app_set_boot(app_t *a, bool abnormal);
 bool app_downlink(app_t *a, uint8_t port, const uint8_t *data, uint8_t len);
 /* 지금 쓰는 정압 센서 만점 Pa (설정 0 이면 기본값) */
 uint16_t app_pg_fs_pa(const app_t *a);
-/* LTE 모듈 연결 · 시험 시작 (셀 3.65 V 이상일 때만, 하는 중이면 false) */
+/* LTE 모듈 연결 · 시험 받기 (셀 3.65 V 이상일 때만, 하는 중이면 false). 실제 시작은 다음 app_step 에서 */
 void app_set_lte(app_t *a, lte_t *lte);
 bool app_lte_test(app_t *a);
 bool app_set_keys(app_t *a, const uint8_t dev_eui[8], const uint8_t app_eui[8], const uint8_t app_key[16]);

@@ -129,6 +129,34 @@ int main(void)
     run(600);
     ok("켜지는 중에 멈춰도 결국 꺼짐", L.res.code == LTE_R_ABORTED && !F.on && !lte_busy(&L));
 
+    printf("이미 켜져 있는 모듈 (MCU 만 다시 켜진 뒤)\n");
+    fresh();
+    F.on = true;
+    F.boot_t = now - 100u;
+    ok("켜져 있음을 읽음", lte_is_on(&L));
+    lte_start(&L, now);
+    ok("PWRKEY 를 누르지 않고 바로 진행 (누르면 꺼짐)", !F.key_down && F.presses == 0 && L.state == LTE_S_IO);
+    run(600);
+    ok("시험은 그대로 끝나고 꺼짐", L.res.code == LTE_R_OK && L.res.off == LTE_OFF_QPOWD && !F.on && F.presses == 0);
+
+    printf("켜진 채 남은 모듈을 끄기만 함\n");
+    fresh();
+    ok("꺼져 있으면 아무것도 안 함", !lte_off_start(&L, now) && !lte_busy(&L) && F.presses == 0);
+    F.on = true;
+    F.boot_t = now - 100u;
+    ok("켜져 있으면 끄기 시작", lte_off_start(&L, now) && F.key_down);
+    run(600);
+    ok("PWRKEY 로 꺼짐 · 결과 '켜져 있어서 끔'", L.done && L.res.code == LTE_R_LEFT_ON && L.res.off == LTE_OFF_KEY && !F.on);
+
+    printf("AT+QPOWD 가 늦게 먹음 (37 s) → PWRKEY 를 누르는 중에 꺼짐\n");
+    fresh();
+    F.qpowd_delay = 37;
+    lte_start(&L, now);
+    run(600);
+    ok("누르던 PWRKEY 를 바로 놓아 다시 켜지지 않음", !F.on && !F.key_down && L.res.off == LTE_OFF_QPOWD && F.resets == 0);
+    now += 10;
+    ok("10 s 뒤에도 꺼져 있음", !lte_is_on(&L));
+
     printf("\n%d / %d 통과\n", checks - fails, checks);
     return fails ? 1 : 0;
 }

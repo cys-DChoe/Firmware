@@ -117,12 +117,16 @@ static bool io_on(void *ctx, bool on)
 
 void lte_board_init(lte_uart_t *u)
 {
-    /* STATUS(PB9): 입력, 풀 없음 (모듈이 1.8 V 로 밂). PWRKEY · RST 는 main.c gpio_init 에서 낮음 출력 */
+    /* STATUS(PB9): 입력 + 내부 풀업. PWRKEY · RST 는 main.c gpio_init 에서 낮음 출력.
+     * EG915U Hardware Design 4.9.2 본문은 STATUS 를 "open drain output"이라 하고(핀 표는 DO VOHmin 1.35 V 로 서로 다름),
+     * PCB3_2 에는 옛 회로의 풀업 저항(R_LTE_ST)이 없음 → 풀업이 없으면 켜졌을 때 선이 뜰 수 있음.
+     * 이 핀은 VDDIO2(= 모듈 VDD_EXT 1.8 V) 쪽이라 내부 풀업도 1.8 V 로 당김: 열린 드레인이든 푸시풀이든 읽히고,
+     * 모듈이 꺼지면 VDDIO2 가 없어 0 으로 읽힘(io_status 가 VDDIO2RDY 도 같이 봄). [보드에서 확인] */
     __HAL_RCC_GPIOB_CLK_ENABLE();
     GPIO_InitTypeDef g = {0};
     g.Pin = LTE_STATUS_PIN;
     g.Mode = GPIO_MODE_INPUT;
-    g.Pull = GPIO_NOPULL;
+    g.Pull = GPIO_PULLUP;
     HAL_GPIO_Init(LTE_STATUS_PORT, &g);
 
     u->up = false;

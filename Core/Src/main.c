@@ -118,6 +118,10 @@ static void hw_power_save(void *ctx, bool off)
         HAL_GPIO_WritePin(LED1_PORT, LED1_PIN, GPIO_PIN_RESET);
         HAL_GPIO_WritePin(LED2_PORT, LED2_PIN, GPIO_PIN_RESET);
     } else {
+        /* 차압 센서 레일(풀업도 같은 레일)이 올라온 뒤 I2C2 를 다시 엶 — 선이 내려갔다 오면서 굳은 BUSY 를 풂 */
+        HAL_GPIO_WritePin(SENS_EN_PORT, SENS_EN_PIN, GPIO_PIN_SET);
+        HAL_Delay(SENSORS_POWER_ON_MS);
+        i2c_stm32_reopen(&s_i2c_dp);
         (void)sensors_power_on(&s_sens);
     }
 }
