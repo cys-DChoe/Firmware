@@ -106,7 +106,22 @@ static void hw_set_pg_fs(void *ctx, double pa)
     printf("정압 센서 만점: %.0f Pa\n", pa);
 }
 
-static const app_hw_t HW = {hw_read, hw_now, hw_time_valid, hw_batt, hw_flash, hw_log, NULL, hw_set_time, hw_set_pg_fs};
+/* 셀이 낮아 쉴 때: 센서 전원 · LED 끔. 다시 켤 때 센서 전원 · BMP390 설정 다시
+ * (LTE 를 넣으면 여기서 먼저 꺼야 함 — 펌웨어 주의 2절, 지금은 켜지 않으므로 없음) */
+static void hw_power_save(void *ctx, bool off)
+{
+    (void)ctx;
+    if (off) {
+        sensors_power_off(&s_sens);
+        HAL_GPIO_WritePin(LED1_PORT, LED1_PIN, GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(LED2_PORT, LED2_PIN, GPIO_PIN_RESET);
+    } else {
+        (void)sensors_power_on(&s_sens);
+    }
+}
+
+static const app_hw_t HW = {hw_read,   hw_now, hw_time_valid, hw_batt,     hw_flash, hw_log, NULL,
+                            hw_set_time, hw_set_pg_fs, hw_power_save};
 
 /* 버튼을 누르고 있는 동안 기다려 3초 넘으면 영점 */
 static void button_check(void)

@@ -26,6 +26,8 @@ typedef struct {
     meter_sample_t s;
     bool sensors_ok;
     double pg_fs;               /* 앱이 알려 준 정압 센서 만점 */
+    bool saving;                /* 셀이 낮아 쉬는 중 (센서 · LED 끔) */
+    int save_calls;
     bool time_ok;
     uint16_t batt;
     int flash_on_calls;
@@ -59,7 +61,13 @@ static bool b_set_time(void *ctx, uint32_t t)
 }
 
 static void b_set_pg_fs(void *ctx, double pa) { ((board_t *)ctx)->pg_fs = pa; }
-static const app_hw_t HW = {b_read, b_now, b_time, b_batt, b_flash, b_log, &B, b_set_time, b_set_pg_fs};
+static void b_power_save(void *ctx, bool off)
+{
+    board_t *b = ctx;
+    b->saving = off;
+    b->save_calls++;
+}
+static const app_hw_t HW = {b_read, b_now, b_time, b_batt, b_flash, b_log, &B, b_set_time, b_set_pg_fs, b_power_save};
 
 static ring_t RING;
 static nvlog_t NS, NC;
@@ -268,6 +276,56 @@ int main(void)
     run_for(60);
     ok("3.4 V → 경고 비트", last_report(&r) && (r.flags & REPORT_F_BATT_WARN) && !(r.flags & REPORT_F_BATT_QUALITY) &&
                                r.batt_mv == 3400);
+
+    printf("셀 3.3 V 종료: 낮으면 쉬고, 오르면 다시 시작\n");
+    {
+        B.batt = 3240;                              /* 한 번만 낮음 → 안 멈춤 */
+        run_for(60);
+        B.batt = 3700;
+        run_for(60);
+        ok("한 번 튄 낮은 값으로는 안 멈춤", !A.batt_off && !B.saving && A.batt_offs == 0u);
+
+        const uint32_t reps = A.reports;
+        B.batt = 3240;
+        run_for(2 * 60 + 5);
+        ok("2분 이어 3.25 V 아래 → 쉼 · 센서 끔", A.batt_off && B.saving && A.batt_offs == 1u);
+        ok("마지막 기록에 '저전압 멈춤' 비트", last_report(&r) && (r.flags & REPORT_F_BATT_OFF) && A.reports == reps + 2u);
+        ok("쉬는 동안은 20 s 마다만 깸", app_step(&A) == APP_OFF_TICK_MS);
+
+        const double tot = A.meter.total_nm3;
+        const uint32_t reps_off = A.reports;
+        const uint32_t ringn = RING.next_seq;
+        B.s.dp_raw_pa = 30.0;                       /* 쉬는 동안 가스를 써도 */
+        B.batt = 3400;                              /* 다시 켬 문턱(3.45 V) 아래 */
+        run_for(25 * 60);
+        ok("쉬는 동안: 사용량 · 보고 · 기록 그대로 (측정 안 함)", A.meter.total_nm3 == tot && A.reports == reps_off &&
+                                                               RING.next_seq == ringn);
+        ok("3.40 V 로는 다시 안 켬", A.batt_off && B.saving);
+
+        B.batt = 3500;
+        int steps = 0;
+        while (A.batt_off && steps < 40) {            /* 20 s 씩 깨며 10분 안에 셀을 다시 잼 */
+            const uint32_t ms = app_step(&A);
+            B.now += ms / 1000u;
+            F.clock += ms;
+            steps++;
+        }
+        ok("3.45 V 넘으면 10분 안에 다시 시작 · 센서 켬", !A.batt_off && !B.saving && steps <= 31);
+        const double t0r = A.meter.total_m3;
+        B.now += 1u;
+        F.clock += 1000u;
+        const uint32_t gap = B.now - A.last_s;         /* 다시 시작한 뒤 깬 시간(10 s 쉼 + 1 s) */
+        app_step(&A);
+        const double q1 = A.meter.last_flow_m3h / 3600.0;
+        ok("다시 시작 뒤 첫 적산은 깨어 있던 시간만 (쉰 10분은 안 셈)",
+           gap <= 11u && q1 > 0.0 && fabs((A.meter.total_m3 - t0r) - q1 * gap) < 1e-9);
+        const double t1 = A.meter.total_nm3;
+        run_for(3 * 60);
+        ok("다시 시작 뒤 보고가 쌓이고 사용량도 셈", A.reports > reps_off && A.meter.total_nm3 > t1);
+        idle_gas();
+        B.batt = 3700;
+        run_for(2 * 60);
+    }
 
     printf("망 시각으로 시계 맞추기\n");
     /* 지금 가짜 RTC 는 2026-11-16 09:xx. 망은 3시간 뒤라고 알려 줌 */

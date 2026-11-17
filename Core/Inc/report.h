@@ -42,6 +42,7 @@
 #define REPORT_F_INCOMPLETE     (1u << 11)  /* 이 분의 측정 시간이 54 s 미만 */
 #define REPORT_F_BOOT           (1u << 12)  /* 켠 뒤 첫 기록 (11/17 추가, 형식 v1 그대로 — 전엔 늘 0) */
 #define REPORT_F_FAULT_RESET    (1u << 13)  /* 워치독 · 오류로 재시작한 뒤 첫 기록 */
+#define REPORT_F_BATT_OFF       (1u << 14)  /* 셀이 낮아 이 기록 뒤 측정 · 보고를 멈춤 (셀이 오르면 다시 시작) */
 
 typedef struct {
     uint16_t seq;

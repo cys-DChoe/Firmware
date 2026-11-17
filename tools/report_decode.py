@@ -29,6 +29,7 @@ FLAGS = [
     "INCOMPLETE",     # 측정 시간 54 s 미만
     "BOOT",           # 켠 뒤 첫 기록
     "FAULT_RESET",    # 워치독 · 오류로 재시작한 뒤 첫 기록
+    "BATT_OFF",       # 셀이 낮아 이 기록 뒤 측정 · 보고를 멈춤
 ]
 
 

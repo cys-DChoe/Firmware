@@ -214,6 +214,12 @@ static void build_report(app_t *a, const meter_minute_t *mm, uint32_t now, repor
     if (mv != 0u) {
         a->batt_flags = report_battery_flags(mv, a->batt_flags);
         f |= a->batt_flags;
+        /* 3.3 V 종료: 한 번 튄 값으로 멈추지 않게 이어서 낮을 때만 */
+        a->batt_low_n = (mv < APP_BATT_OFF_MV) ? (uint8_t)(a->batt_low_n + 1u) : 0u;
+        if (a->batt_low_n >= APP_BATT_OFF_COUNT) {
+            f |= REPORT_F_BATT_OFF;
+            a->batt_off_pending = true;
+        }
     }
     f |= a->boot_flags;                 /* 켠 뒤 첫 기록에만 */
     a->boot_flags = 0u;
@@ -413,9 +419,63 @@ static void lora_work(app_t *a, uint32_t now)
     }
 }
 
+static void power_save(app_t *a, bool off)
+{
+    if (a->hw.power_save != NULL) {
+        a->hw.power_save(a->hw.ctx, off);
+    }
+}
+
+/* 셀이 낮음 → 측정 · 보고를 멈추고 쉼 (누적은 방금 1분 저장에서 이미 저장됨) */
+static void batt_off_enter(app_t *a, uint32_t now)
+{
+    a->batt_off_pending = false;
+    a->batt_off = true;
+    a->batt_offs++;
+    a->off_since = now;
+    a->next_batt_check_s = now + APP_OFF_CHECK_S;
+    power_save(a, true);
+    say(a, "전원: 셀 낮음 → 측정 · 보고 멈춤");
+}
+
+static void batt_off_leave(app_t *a, uint32_t now, uint16_t mv)
+{
+    a->batt_off = false;
+    a->batt_low_n = 0;
+    power_save(a, false);
+    a->prev_ok = false;                 /* 쉬기 전 값으로 적산하지 않게 */
+    a->last_s = now;
+    a->last_minute = now / 60u;         /* 첫 분은 반쪽이라 다음 분 경계부터 보고 */
+    char m[48];
+    snprintf(m, sizeof(m), "전원: 셀 %u mV → 다시 시작", (unsigned)mv);
+    say(a, m);
+}
+
+/* 쉬는 동안: 마지막 보고만 마저 보내고, 10분마다 셀을 잼 */
+static uint32_t batt_off_step(app_t *a, uint32_t now)
+{
+    a->last_s = now;
+    if ((int32_t)(now - a->off_since) < (int32_t)APP_OFF_TX_GRACE_S && a->rak != NULL && a->lora_ready &&
+        a->rak->joined && (a->fresh_pending || a->tx_live)) {
+        lora_work(a, now);
+    }
+    if ((int32_t)(now - a->next_batt_check_s) >= 0) {
+        a->next_batt_check_s = now + APP_OFF_CHECK_S;
+        const uint16_t mv = a->hw.batt_mv != NULL ? a->hw.batt_mv(a->hw.ctx) : 0u;
+        if (mv >= APP_BATT_ON_MV) {
+            batt_off_leave(a, now, mv);
+            return lp_tick_ms(false);
+        }
+    }
+    return APP_OFF_TICK_MS;
+}
+
 uint32_t app_step(app_t *a)
 {
     const uint32_t now = a->hw.now_s(a->hw.ctx);
+    if (a->batt_off) {
+        return batt_off_step(a, now);
+    }
     if (!a->started) {
         a->started = true;
         a->last_s = now;
@@ -453,9 +513,12 @@ uint32_t app_step(app_t *a)
     if (lp_minute_due(a->last_minute, now)) {
         a->last_minute = now / 60u;
         do_minute(a, now);
+        if (a->batt_off_pending) {
+            batt_off_enter(a, now);
+        }
     }
-    lora_work(a, now);
-    return lp_tick_ms(meter_is_flowing(&a->meter));
+    lora_work(a, now);                  /* 쉬러 가더라도 마지막 보고 송신은 여기서 시작 */
+    return a->batt_off ? APP_OFF_TICK_MS : lp_tick_ms(meter_is_flowing(&a->meter));
 }
 
 bool app_zero(app_t *a)

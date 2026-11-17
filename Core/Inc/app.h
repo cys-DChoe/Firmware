@@ -46,6 +46,17 @@
 #define APP_TX_TIMEOUT_S     60u     /* 송신 시작 뒤 '끝' 소식을 기다리는 한도 (SF12 송신 + 수신 창 2개보다 넉넉히) */
 #define APP_JOIN_TIMEOUT_S   300u    /* AT+JOIN=1:0:10:8 = 8번 × 10 s 간격 + 수신 창, 넉넉히 */
 #define APP_LORA_MISS_MAX    3u      /* 무응답 · 소식 놓침이 이만큼 이어지면 모듈 리셋 후 처음부터 */
+/* 셀 3.3 V 종료 (설계서 7번 · 펌웨어 주의 "3.3 셧다운"): MCU 가 끊을 전원 스위치는 없으므로 펌웨어가 쉼.
+ *   1분 보고 때 잰 셀이 OFF 아래로 2번 이어지면 그 기록에 BATT_OFF 비트를 붙이고(마지막 보고) →
+ *   센서 끄고 측정 · 보고 · 가입을 멈춤. 20 s 마다 깨어 워치독만 밀고, 10분마다 셀을 재서 ON 이상이면 다시 시작.
+ *   문턱은 펌웨어 주의의 0.1 V 여유 규칙(3.3 → 3.25 판정)과, 짐을 내린 뒤 셀이 되튀는 폭을 생각한 다시 켬 값.
+ *   [가정 — 보드 · 셀에서 다시 정함] */
+#define APP_BATT_OFF_MV      3250u
+#define APP_BATT_ON_MV       3450u
+#define APP_BATT_OFF_COUNT   2u
+#define APP_OFF_TICK_MS      20000u  /* 쉬는 동안 깨는 간격 — 워치독(최소 28.6 s)보다 짧게 */
+#define APP_OFF_CHECK_S      600u
+#define APP_OFF_TX_GRACE_S   120u    /* 쉬기 직전 마지막 보고를 보낼 시간 */
 
 typedef struct {
     bool (*read)(void *ctx, meter_sample_t *s);   /* 센서 읽기, 믿을 만하면 true */
@@ -57,6 +68,7 @@ typedef struct {
     void *ctx;
     bool (*set_time)(void *ctx, uint32_t unix_s);  /* RTC 맞추기 (없으면 NULL — 시계 맞추기 안 함) */
     void (*set_pg_fs)(void *ctx, double pa);        /* 정압 센서 만점 바꾸기 (없으면 NULL) */
+    void (*power_save)(void *ctx, bool off);        /* 셀 낮아 쉼: 센서 · LED 끄기 / 켜기 (없으면 NULL) */
 } app_hw_t;
 
 typedef struct {
@@ -75,6 +87,10 @@ typedef struct {
     uint32_t last_minute;       /* 마지막으로 보고 만든 분 번호 (Unix 초 / 60) */
     uint16_t boot_flags;        /* 켠 뒤 첫 기록에 붙일 비트 (REPORT_F_BOOT · FAULT_RESET) */
     uint16_t batt_flags;        /* 배터리 비트 오르내림 폭용 */
+    uint8_t batt_low_n;         /* 셀 OFF 문턱 아래 연속 횟수 */
+    bool batt_off_pending;      /* 이번 1분 기록이 마지막 — 저장 뒤 쉼 */
+    bool batt_off;              /* 셀이 낮아 쉬는 중 */
+    uint32_t off_since, next_batt_check_s;
     bool fresh_pending;         /* 방금 만든 보고를 아직 안 보냄 */
     uint32_t fresh_seq;
     bool tx_live;               /* 모듈이 보내는 중인 기록 */
@@ -93,7 +109,7 @@ typedef struct {
     double dp_hist[APP_ZERO_SAMPLES];
     uint16_t dp_n, dp_head;
     /* 셈 (로그 · 시험용) */
-    uint32_t reports, sent, send_fail, resends, joins, lora_restarts, tx_timeouts;
+    uint32_t reports, sent, send_fail, resends, joins, lora_restarts, tx_timeouts, batt_offs;
 } app_t;
 
 /* 저장된 설정 · 누적량을 읽어 계산 모듈에 넣음. 누적 기록이 없으면 링 마지막 보고에서 되살림. */
