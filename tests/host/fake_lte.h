@@ -16,6 +16,7 @@ typedef struct {
     uint32_t reg_after;            /* 켜진 뒤 이 초가 지나면 등록 */
     uint8_t reg_stat;              /* 등록되면 이 값 (1 · 5) */
     uint32_t qpowd_delay;          /* AT+QPOWD 뒤 꺼질 때까지 초 (보통 3, 망 상태에 따라 길어짐) */
+    uint8_t creg_stat;             /* 2G 등록 상태 (+CREG) — 0 = 안 됨 */
     bool qpowd_ignored, key_off_ignored, key_ignored_until_reset;
     int presses, resets, cmds;
     char rx[512];

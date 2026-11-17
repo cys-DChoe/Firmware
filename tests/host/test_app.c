@@ -342,6 +342,7 @@ int main(void)
         led_zero();
         run_for(5 * 60);
         ok("LED: 쉬는 동안은 안 깜빡임", B.led_green + B.led_red1 + B.led_red2 == 0);
+        ok("쉬는 동안은 영점 버튼이 안 먹음 (센서 꺼짐)", !app_zero(&A));
 
         B.batt = 3500;
         int steps = 0;
@@ -536,6 +537,10 @@ int main(void)
         B.batt = 3600;
         ok("셀 3.60 V 면 안 함 (3.65 V 부터)", app_downlink(&A, APP_CFG_PORT, cmd, 1) && !lte_busy(&LT) && !A.lte_want &&
                                                  A.lte_refused == 1u);
+        F.nlog = 0;
+        run_ack(30);
+        ok("'셀 낮아 안 함' 도 서버로 올림 (결과 코드 8)", A.lte_last.code == LTE_R_LOW_BATT && !A.lte_report_pending &&
+                                                     count_writes("AT+SEND=2:") == 1);
         B.batt = 3800;
         const uint32_t reps = A.reports;
         F.nlog = 0;                                 /* 가짜 모듈의 명령 기록(64줄)을 비우고 셈 */
@@ -558,6 +563,38 @@ int main(void)
         B.batt = 3700;
         run_ack(11 * 60);
         ok("셀이 오르면 다시 시작", !A.batt_off);
+    }
+
+    printf("LTE 결과를 보내다 LoRa 를 다시 시작 → 다음 기록이 '보냄' 표시를 제대로 받음\n");
+    {
+        A.tx_is_lte = true;
+        A.tx_live = true;
+        (void)app_lora_start(&A);
+        ok("다시 시작하면 'LTE 결과 보내는 중' 표시도 지움", !A.tx_is_lte && !A.tx_live);
+        push(&F, "+EVT:JOINED\r\n");
+        run_ack(3 * 60);
+        uint32_t useq;
+        ok("그 뒤 기록들은 모두 '보냄'", ring_find_unsent(&RING, 3, &useq) != RING_OK);
+    }
+
+    printf("켤 때 셀이 이미 낮음 → 가입 안 하고 1분 안에 쉼\n");
+    {
+        B.batt = 3200;
+        boot();
+        F.nlog = 0;
+        ok("LoRa 시작 안 함 (가입 송신 없음)", app_lora_start(&A) != RAK_OK && !A.lora_ready &&
+                                               count_writes("AT+JOIN") == 0);
+        const uint32_t t0 = B.now;
+        while (!A.batt_off && B.now - t0 < 5u * 60u) {
+            run_for(10);
+        }
+        ok("첫 1분 보고로 바로 쉼 (전엔 2분 + 가입)", A.batt_off && B.now - t0 <= 2u * 60u);
+        B.batt = 3700;
+        run_ack(11 * 60);
+        ok("셀이 오르면 다시 시작", !A.batt_off);
+        (void)app_lora_start(&A);
+        push(&F, "+EVT:JOINED\r\n");
+        run_ack(60);
     }
 
     printf("LTE 로 망을 찾는 중에 시계가 뜀 (망 시각으로 맞춤) → LTE 는 안 흔들림\n");

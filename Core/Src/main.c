@@ -109,6 +109,7 @@ static void hw_set_pg_fs(void *ctx, double pa)
 }
 
 /* 셀이 낮아 쉴 때: 센서 전원 · LED 끔. 다시 켤 때 센서 전원 · BMP390 설정 다시
+ * 센서 전원(SENS_EN)은 차압 센서(HSC) 레일만 끔 — 정압(ABP2) · 기압(BMP390)은 3V3 상시라 대기 전류(수십 nA · µA)로 남음
  * (LTE 를 넣으면 여기서 먼저 꺼야 함 — 펌웨어 주의 2절, 지금은 켜지 않으므로 없음) */
 static void hw_power_save(void *ctx, bool off)
 {

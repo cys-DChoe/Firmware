@@ -51,6 +51,9 @@ static void handle(fake_lte_t *f, const char *c)
         const unsigned st = (T(f) - f->boot_t >= f->reg_after) ? f->reg_stat : 2u;
         snprintf(b, sizeof(b), "\r\n+CEREG: 0,%u\r\n\r\nOK\r\n", st);
         say(f, b);
+    } else if (strcmp(c, "AT+CREG?") == 0) {
+        snprintf(b, sizeof(b), "\r\n+CREG: 0,%u\r\n\r\nOK\r\n", (unsigned)f->creg_stat);
+        say(f, b);
     } else if (strcmp(c, "AT+CSQ") == 0) {
         say(f, "\r\n+CSQ: 18,99\r\n\r\nOK\r\n");
     } else if (strcmp(c, "AT+COPS?") == 0) {

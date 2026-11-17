@@ -142,6 +142,10 @@ bool app_lte_test(app_t *a)
     if (mv < APP_LTE_MIN_MV) {
         a->lte_refused++;
         say(a, "LTE: 셀이 3.65 V 아래 — 시험 안 함");
+        memset(&a->lte_last, 0, sizeof(a->lte_last));
+        a->lte_last.code = LTE_R_LOW_BATT;  /* 서버가 '셀 낮아 안 함'을 알게 결과로 올림 */
+        a->lte_last.csq = 99;
+        a->lte_report_pending = true;
         return false;
     }
     say(a, "LTE: 켜기 시작");
@@ -220,7 +224,16 @@ rak_err_t app_lora_start(app_t *a)
     a->lora_started = true;
     a->lora_ready = false;
     a->tx_live = false;
+    a->tx_is_lte = false;                   /* 보내던 LTE 결과도 버림 — 남아 있으면 다음 링 기록이 '보냄' 표시를 못 받음 */
     rak_give_up(a->rak);                    /* 처음부터 다시: 전에 기다리던 소식은 버림 */
+    /* 켤 때 셀이 이미 낮으면 가입(송신)부터 하지 않음 — 1분 보고 한 번으로 바로 쉬러 가게 */
+    const uint16_t mv0 = a->hw.batt_mv != NULL ? a->hw.batt_mv(a->hw.ctx) : 0u;
+    if (mv0 != 0u && mv0 < APP_BATT_OFF_MV) {
+        a->batt_low_n = (uint8_t)(APP_BATT_OFF_COUNT - 1u);
+        a->next_lora_try_s = a->hw.now_s(a->hw.ctx) + APP_JOIN_RETRY_S;
+        say(a, "LoRa: 셀이 낮아 시작 안 함");
+        return RAK_E_BUSY;
+    }
     bool set = false;
     rak_err_t e = rak_ensure_baud(a->rak, APP_LORA_BAUD, APP_LORA_BAUD_OLD, &set);
     if (e != RAK_OK) {
@@ -347,6 +360,7 @@ static bool send_seq(app_t *a, uint32_t seq, bool resend)
         return false;
     }
     a->tx_live = true;
+    a->tx_is_lte = false;
     a->tx_seq = seq;
     a->tx_start_s = a->hw.now_s(a->hw.ctx);
     return true;
@@ -529,6 +543,8 @@ static void batt_off_leave(app_t *a, uint32_t now, uint16_t mv)
     a->batt_low_n = 0;
     power_save(a, false);
     a->prev_ok = false;                 /* 쉬기 전 값으로 적산하지 않게 */
+    a->dp_n = 0;                        /* 영점도 쉬기 전 차압으로 잡지 않게 */
+    a->dp_head = 0;
     a->last_s = now;
     a->last_minute = now / 60u;         /* 첫 분은 반쪽이라 다음 분 경계부터 보고 */
     char m[48];
@@ -643,8 +659,8 @@ uint32_t app_step(app_t *a)
 
 bool app_zero(app_t *a)
 {
-    if (a->dp_n < 4u) {
-        return false;                   /* 너무 적게 읽음 */
+    if (a->batt_off || a->dp_n < 4u) {
+        return false;                   /* 쉬는 중(센서 꺼짐) · 너무 적게 읽음 */
     }
     double sum = 0.0;
     for (uint16_t i = 0; i < a->dp_n; i++) {

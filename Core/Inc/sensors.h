@@ -36,7 +36,7 @@ typedef struct {
 
 void sensors_init(sensors_t *s, const i2c_bus_t *bus_dp, const i2c_bus_t *bus_pg, void (*power)(bool on));
 sens_err_t sensors_power_on(sensors_t *s);
-void sensors_power_off(sensors_t *s);
+void sensors_power_off(sensors_t *s);   /* SENS_EN 만 내림 = HSC 레일. ABP2 · BMP390 은 3V3 상시 */
 
 /* 한 번 읽기 (약 17 ms: ABP2 5 ms + BMP390 11 ms).
  * 가스 온도는 BMP390 온도를 씀 — 계산식 문서 "우리 부품" 메모: 함체 안 온도라 근사값임.

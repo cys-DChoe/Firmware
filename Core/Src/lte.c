@@ -175,6 +175,13 @@ static bool talking(lte_state_t s)
 
 bool lte_step(lte_t *l, uint32_t now)
 {
+    if (talking(l->state) && !l->io.status(l->io.ctx)) {
+        /* 말이 통하던 모듈이 스스로 꺼짐 (셀 처짐 · 내부 리셋 등) — 끌 것 없이 결과만 남김 */
+        fail(l, LTE_R_DROPPED);
+        l->off_way = LTE_OFF_NONE;
+        finish(l, now);
+        return false;
+    }
     if (l->abort && talking(l->state)) {
         fail(l, LTE_R_ABORTED);
         go(l, LTE_S_QPOWD, now);
@@ -243,6 +250,15 @@ bool lte_step(lte_t *l, uint32_t now)
             const char *comma = strchr(v, ',');   /* "+CEREG: n,stat[,...]" */
             if (comma != NULL) {
                 l->res.reg = (uint8_t)atoi(comma + 1);
+            }
+        }
+        if (l->res.reg != 1u && l->res.reg != 5u &&
+            lte_cmd(l, "AT+CREG?", "+CREG:", v, sizeof(v), LTE_CMD_MS) == 0) {
+            /* EU 판은 2G(GSM)도 됨 — LTE 가 없는 곳에서는 +CREG 로 등록됨이 옴 */
+            const char *comma = strchr(v, ',');
+            const uint8_t st = comma != NULL ? (uint8_t)atoi(comma + 1) : 0u;
+            if (st == 1u || st == 5u) {
+                l->res.reg = st;
             }
         }
         if (l->res.reg == 1u || l->res.reg == 5u) {
@@ -350,6 +366,8 @@ const char *lte_code_name(lte_code_t c)
     case LTE_R_NO_NET:   return "망 등록 안 됨";
     case LTE_R_ABORTED:  return "중간에 멈춤";
     case LTE_R_LEFT_ON:  return "켜져 있어서 끔";
+    case LTE_R_LOW_BATT: return "셀 낮아 안 함";
+    case LTE_R_DROPPED:  return "도중에 꺼짐";
     default:             return "모름";
     }
 }

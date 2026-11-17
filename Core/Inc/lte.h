@@ -18,7 +18,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define LTE_KEY_ON_S        3u      /* PWRKEY 누름 (최소 2 s, RTC 초 눈금이라 3 으로 — 실제 2–3 s) */
+#define LTE_KEY_ON_S        4u      /* PWRKEY 누름 (최소 2 s · 초 눈금이라 실제 3–4 s. 설명서 그림 13: 계속 눌러도 켜짐) */
 #define LTE_KEY_OFF_S       4u      /* PWRKEY 끄기 누름 (최소 3 s) */
 #define LTE_STATUS_ON_S     15u     /* STATUS 가 올라오길 기다림 (보통 5 s) */
 #define LTE_IO_S            5u      /* VDDIO2 준비를 기다림 */
@@ -38,6 +38,8 @@ typedef enum {
     LTE_R_NO_NET,           /* 제한 시간 안에 망 등록 안 됨 */
     LTE_R_ABORTED,          /* 중간에 멈춤 (셀 낮음 등) */
     LTE_R_LEFT_ON,          /* 시키지 않았는데 켜져 있어서 끔 (MCU 만 다시 켜진 뒤 · 지난번에 못 끔) */
+    LTE_R_LOW_BATT,         /* 셀이 낮아 시험 안 함 (부르는 쪽이 채움 — 서버가 '안 함'과 '못 함'을 구분하게) */
+    LTE_R_DROPPED,          /* 하는 도중에 모듈이 꺼짐 (STATUS 낮아짐 — 전원 · 셀 문제 의심) */
 } lte_code_t;
 
 typedef enum {
@@ -51,7 +53,7 @@ typedef enum {
 typedef struct {
     lte_code_t code;
     lte_off_t off;
-    uint8_t reg;            /* +CEREG stat: 1 = 집 망, 5 = 로밍, 2 = 찾는 중, 3 = 거절, 0 = 안 찾음 */
+    uint8_t reg;            /* 등록 상태: 1 = 집 망, 5 = 로밍, 2 = 찾는 중, 3 = 거절, 0 = 안 찾음 (+CEREG, 안 되면 +CREG 2G) */
     uint8_t csq;            /* +CSQ rssi 0–31 (99 = 모름) — dBm = −113 + 2 × csq */
     char oper[20];          /* +COPS 이름 */
     uint16_t secs;          /* 켜서 끌 때까지 */

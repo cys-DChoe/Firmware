@@ -157,6 +157,34 @@ int main(void)
     now += 10;
     ok("10 s 뒤에도 꺼져 있음", !lte_is_on(&L));
 
+    printf("LTE 는 없고 2G 만 되는 곳 (+CREG)\n");
+    fresh();
+    F.reg_after = 100000;
+    F.creg_stat = 1;
+    lte_start(&L, now);
+    run(600);
+    ok("2G 등록도 등록됨으로 봄", L.res.code == LTE_R_OK && L.res.reg == 1u && !F.on);
+
+    printf("망 찾는 도중에 모듈이 스스로 꺼짐\n");
+    fresh();
+    F.reg_after = 100000;
+    lte_start(&L, now);
+    run(20);
+    F.off_at = now;                                  /* 셀 처짐 등으로 꺼짐 */
+    run(600);
+    ok("'도중에 꺼짐' 으로 바로 끝 (끌 것 없음)", L.res.code == LTE_R_DROPPED && L.res.off == LTE_OFF_NONE && !F.key_down);
+
+    printf("PWRKEY 켜기 누름은 2 s 보다 넉넉히\n");
+    fresh();
+    lte_start(&L, now);
+    uint32_t held = 0;
+    while (F.key_down && held < 10u) {
+        lte_step(&L, now);
+        now++;
+        held++;
+    }
+    ok("누름 3 s 이상 (최소 2 s)", held >= 3u);
+
     printf("\n%d / %d 통과\n", checks - fails, checks);
     return fails ? 1 : 0;
 }
