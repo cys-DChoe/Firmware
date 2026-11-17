@@ -61,6 +61,8 @@ typedef struct {
     bool lora_ready;            /* 속도 · 설정까지 끝남 */
     bool started;
     uint32_t last_s;            /* 지난 app_step 시각 */
+    meter_sample_t prev;        /* 지난 측정값 — 간격이 길 때 반씩 나눠 적산 */
+    bool prev_ok;
     uint32_t last_minute;       /* 마지막으로 보고 만든 분 번호 (Unix 초 / 60) */
     uint16_t boot_flags;        /* 켠 뒤 첫 기록에 붙일 비트 (REPORT_F_BOOT · FAULT_RESET) */
     uint16_t batt_flags;        /* 배터리 비트 오르내림 폭용 */

@@ -197,6 +197,28 @@ int main(void)
     ok("보고 순번도 이어짐", A.counter.report_seq == next_report);
     ok("로그로 알림", strstr(B.last_log, "되살림") != NULL);
 
+    printf("링엔 썼는데 누적 저장 전에 전원이 끊김 → 켤 때 링 값으로\n");
+    run_for(2 * 60);                                /* 누적 저장이 다시 생기게 */
+    {
+        const double t0 = A.counter.total_nm3;
+        const uint16_t rs0 = A.counter.report_seq;
+        report_t rr;
+        memset(&rr, 0, sizeof(rr));
+        rr.seq = rs0;                               /* 누적이 아직 안 센 다음 순번 */
+        rr.total_nm3 = t0 + 0.0123;
+        uint8_t bytes[REPORT_LEN];
+        report_encode(&rr, bytes);
+        uint32_t rseq;
+        ring_append(&RING, bytes, &rseq);           /* 누적 저장은 안 함 = 그 사이 끊김 */
+        boot();
+        ok("누적 = 링 값 (0.1 L 안) · 다음 보고 순번 이어짐",
+           fabs(A.meter.total_nm3 - (t0 + 0.0123)) < 0.0001 + 1e-9 && A.counter.report_seq == (uint16_t)(rs0 + 1u));
+        ok("로그로 알림", strstr(B.last_log, "앞서") != NULL);
+        boot();
+        ok("한 번 더 켜도 같은 값 (두 번 더하지 않음)",
+           fabs(A.meter.total_nm3 - (t0 + 0.0123)) < 0.0001 + 1e-9 && A.counter.report_seq == (uint16_t)(rs0 + 1u));
+    }
+
     printf("워치독 · 오류로 재시작했을 때\n");
     app_set_boot(&A, true);
     run_for(2 * 60);
@@ -294,6 +316,26 @@ int main(void)
     F.dead = false;
     run_for(320);
     ok("10분 뒤 리셋부터 다시 → 설정 · 가입 시작", A.lora_ready && F.resets > r0 && R.joining);
+
+    printf("쉴 때(10초 간격) 조리가 시작되면 첫 간격은 반만 셈 (사다리꼴)\n");
+    idle_gas();
+    run_for(3 * 60);
+    ok("쉴 땐 10초마다 깸", app_step(&A) == 10000u);
+    {
+        const double v0 = A.meter.total_m3;
+        B.s.dp_raw_pa = 30.0;                       /* 이 10 s 사이 어딘가에서 불을 켬 */
+        B.now += 10u;
+        F.clock += 10000u;
+        app_step(&A);
+        const double q = A.meter.last_flow_m3h / 3600.0;
+        ok("첫 10 s 간격: 5 s 치만 더함 (전엔 10 s 치)", q > 0.0 && fabs((A.meter.total_m3 - v0) - 5.0 * q) < 1e-9);
+        const double v1 = A.meter.total_m3;
+        B.now += 1u;
+        F.clock += 1000u;
+        app_step(&A);
+        ok("그 뒤 1 s 간격은 그대로 1 s 치", fabs((A.meter.total_m3 - v1) - q) < 1e-9);
+    }
+    idle_gas();
 
     printf("\n%d / %d 통과\n", checks - fails, checks);
     return fails ? 1 : 0;

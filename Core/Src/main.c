@@ -24,6 +24,7 @@
 
 #define FW_VERSION "0.3.0"
 #define BTN_HOLD_ZERO_MS  3000u      /* 버튼 3초 이상 → 영점 */
+#define BTN_STUCK_MS      10000u     /* 이보다 오래 눌려 있으면 고장으로 보고 그만 봄 (떨어지는 순간에만 깨우므로 다시 안 걸림) */
 
 static void mpu_init(void);
 static void gpio_init(void);
@@ -106,18 +107,28 @@ static void button_check(void)
         return;
     }
     const uint32_t t0 = HAL_GetTick();
+    bool zeroed = false;
     while (HAL_GPIO_ReadPin(BTN_PORT, BTN_PIN) == GPIO_PIN_RESET) {
+        wdg_kick();
+        const uint32_t held = HAL_GetTick() - t0;
+        if (held >= BTN_STUCK_MS) {
+            printf("버튼: %lu s 넘게 눌린 채 — 고장으로 보고 무시\n", (unsigned long)(BTN_STUCK_MS / 1000u));
+            break;
+        }
+        if (zeroed) {
+            continue;                   /* 손 뗄 때까지 (최대 BTN_STUCK_MS) */
+        }
         HAL_GPIO_WritePin(LED1_PORT, LED1_PIN, GPIO_PIN_SET);
-        if (HAL_GetTick() - t0 >= BTN_HOLD_ZERO_MS) {
+        if (held >= BTN_HOLD_ZERO_MS) {
             const bool ok = app_zero(&s_app);
             /* 영점 잡힘: LED1 세 번, 실패: LED2 */
             for (int i = 0; i < 6; i++) {
                 HAL_GPIO_TogglePin(ok ? LED1_PORT : LED2_PORT, ok ? LED1_PIN : LED2_PIN);
                 HAL_Delay(150);
             }
-            while (HAL_GPIO_ReadPin(BTN_PORT, BTN_PIN) == GPIO_PIN_RESET) {
-            }
-            break;
+            HAL_GPIO_WritePin(LED1_PORT, LED1_PIN, GPIO_PIN_RESET);
+            HAL_GPIO_WritePin(LED2_PORT, LED2_PIN, GPIO_PIN_RESET);
+            zeroed = true;
         }
     }
     HAL_GPIO_WritePin(LED1_PORT, LED1_PIN, GPIO_PIN_RESET);

@@ -73,6 +73,11 @@ lp_wake_t lp_sleep_ms(uint32_t ms)
     HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI);
     HAL_ResumeTick();
     HAL_RTCEx_DeactivateWakeUpTimer(&g_rtc);
+    /* Stop 중엔 RTC 그림자 레지스터(시각 읽는 칸)가 안 따라옴 → 깬 직후 읽으면 잠들기 전 시각이 나올 수 있음.
+     * RSF 를 지우고 다시 맞춰질 때까지(RTCCLK 2번, ~61 µs) 기다림 (RM0481 RTC 'Reading the calendar' · ST 예제) */
+    __HAL_RTC_WRITEPROTECTION_DISABLE(&g_rtc);
+    (void)HAL_RTC_WaitForSynchro(&g_rtc);
+    __HAL_RTC_WRITEPROTECTION_ENABLE(&g_rtc);
     return s_timer_fired ? LP_WAKE_TIMER : LP_WAKE_OTHER;
 }
 

@@ -54,6 +54,19 @@ void app_init(app_t *a, const app_hw_t *hw, ring_t *ring, nvlog_t *nv_set, nvlog
         a->meter.vent_minutes = a->counter.vent_minutes;
         a->meter.depletions = a->counter.depletions;
         a->meter.events.count = a->counter.events;
+        /* 1분마다 링에 먼저 쓰고 누적을 나중에 저장함 → 그 사이 전원이 끊기면 링이 한 분 앞섬.
+         * 링 마지막 보고가 누적이 아직 안 센 순번이고 값이 더 크면 그걸로 (0.1 L 단위) */
+        ring_rec_t last;
+        report_t r;
+        if (ring_last(ring, &last) == RING_OK && report_decode(last.report, RING_REPORT_SIZE, &r) &&
+            r.seq == a->counter.report_seq && r.total_nm3 > a->counter.total_nm3) {
+            const double add = r.total_nm3 - a->counter.total_nm3;
+            const double ratio = a->counter.total_nm3 > 0.0 ? a->counter.total_m3 / a->counter.total_nm3 : 1.0;
+            a->meter.total_nm3 = r.total_nm3;
+            a->meter.total_m3 += add * ratio;           /* 실제 부피는 보고에 없어 비율로 */
+            a->counter.report_seq = (uint16_t)(r.seq + 1u);
+            say(a, "누적: 링이 한 분 앞서 있어 그 값으로");
+        }
     } else {
         /* 누적 기록이 없으면 링의 마지막 1분 보고로 되살림 (0.1 L 단위) */
         ring_rec_t last;
@@ -370,16 +383,25 @@ uint32_t app_step(app_t *a)
     }
 
     meter_sample_t s;
-    if (a->hw.read(a->hw.ctx, &s)) {
-        if (dt > 0u) {
+    const bool got = a->hw.read(a->hw.ctx, &s);
+    if (got) {
+        if (dt > 1u && a->prev_ok) {
+            /* 쉴 때는 10 s 마다 깸 → 이번 값만으로 10 s 를 다 채우면 조리 시작 때 평균 5 s 치를 더 셈.
+             * 앞 절반은 지난 값, 뒤 절반은 이번 값으로 (사다리꼴) — 시작 시점이 간격 안 어디든 평균 오차 0 */
+            meter_step(&a->meter, &a->prev, 0.5 * (double)dt);
+            meter_step(&a->meter, &s, 0.5 * (double)dt);
+        } else if (dt > 0u) {
             meter_step(&a->meter, &s, (double)dt);
         }
+        a->prev = s;
         a->dp_hist[a->dp_head] = s.dp_raw_pa;
         a->dp_head = (uint16_t)((a->dp_head + 1u) % APP_ZERO_SAMPLES);
         if (a->dp_n < APP_ZERO_SAMPLES) {
             a->dp_n++;
         }
     }
+
+    a->prev_ok = got;
 
     if (lp_minute_due(a->last_minute, now)) {
         a->last_minute = now / 60u;
