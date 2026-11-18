@@ -101,3 +101,27 @@ uint16_t report_battery_flags(uint16_t batt_mv, uint16_t prev_flags)
     }
     return f;
 }
+
+size_t report_counts_encode(const report_counts_t *c, uint8_t out[REPORT_COUNTS_LEN])
+{
+    out[0] = REPORT_COUNTS_VERSION;
+    put16(&out[1], c->seq);
+    put32(&out[3], c->cooking);
+    put32(&out[7], c->depletions);
+    put32(&out[11], c->vent_minutes);
+    put32(&out[15], c->leaks);
+    return REPORT_COUNTS_LEN;
+}
+
+bool report_counts_decode(const uint8_t *in, size_t len, report_counts_t *c)
+{
+    if (len != REPORT_COUNTS_LEN || in[0] != REPORT_COUNTS_VERSION) {
+        return false;
+    }
+    c->seq = get16(&in[1]);
+    c->cooking = get32(&in[3]);
+    c->depletions = get32(&in[7]);
+    c->vent_minutes = get32(&in[11]);
+    c->leaks = get32(&in[15]);
+    return true;
+}

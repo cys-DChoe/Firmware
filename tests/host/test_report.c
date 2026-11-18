@@ -113,6 +113,21 @@ int main(int argc, char **argv)
     f = report_battery_flags(3290, f);
     ok("3.29 V: 경고 + 품질", f == (REPORT_F_BATT_WARN | REPORT_F_BATT_QUALITY));
 
+    printf("횟수 보고 (포트 3)\n");
+    {
+        const report_counts_t c = {0x0102, 0x03040506u, 7u, 0x00010000u, 2u};
+        uint8_t cb[REPORT_COUNTS_LEN];
+        ok("19 바이트", report_counts_encode(&c, cb) == 19u && REPORT_COUNTS_LEN == 19u);
+        const uint8_t want[19] = {1, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0, 0, 0, 7, 0, 1, 0, 0, 0, 0, 0, 2};
+        ok("바이트 배치 (큰 쪽 먼저)", memcmp(cb, want, 19) == 0);
+        report_counts_t d;
+        ok("풀면 같은 값", report_counts_decode(cb, 19, &d) && d.seq == c.seq && d.cooking == c.cooking &&
+                               d.depletions == 7u && d.vent_minutes == 0x00010000u && d.leaks == 2u);
+        cb[0] = 2;
+        ok("버전 다르면 안 풂", !report_counts_decode(cb, 19, &d));
+        ok("길이 다르면 안 풂", !report_counts_decode(want, 18, &d));
+    }
+
     /* 파이썬 대조용 벡터 */
     if (argc > 1) {
         FILE *vf = fopen(argv[1], "w");
@@ -129,6 +144,17 @@ int main(int argc, char **argv)
                           REPORT_F_DEPLETED | REPORT_F_OUT_OF_RANGE | REPORT_F_ZERO_UNSET |
                           REPORT_F_TIME_UNSYNCED | REPORT_F_INCOMPLETE};
             write_vector(vf, &e);
+            const report_counts_t cv[2] = {{0, 0, 0, 0, 0}, {65535, 4000000000u, 70000u, 123456u, 3u}};
+            for (int k = 0; k < 2; k++) {
+                uint8_t cb[REPORT_COUNTS_LEN];
+                report_counts_encode(&cv[k], cb);
+                fprintf(vf, "C:");
+                for (size_t i = 0; i < REPORT_COUNTS_LEN; i++) {
+                    fprintf(vf, "%02x", cb[i]);
+                }
+                fprintf(vf, "|%u|%u|%u|%u|%u\n", cv[k].seq, cv[k].cooking, cv[k].depletions, cv[k].vent_minutes,
+                        cv[k].leaks);
+            }
             fclose(vf);
         }
     }

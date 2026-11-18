@@ -140,6 +140,7 @@ typedef struct {
     bool lw_valid;
     uint16_t leak_streak;
     bool leak_active;
+    uint32_t leaks;             /* 누설(계량기 뒤) 판정이 꺼짐 → 켜짐으로 바뀐 횟수 (누적, 11/18) */
     double leak_flow_m3h;       /* 마지막 30분 평균 차압으로 구한 누설 유량 */
 
     /* 이 분 누적 */

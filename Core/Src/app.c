@@ -58,6 +58,7 @@ void app_init(app_t *a, const app_hw_t *hw, ring_t *ring, nvlog_t *nv_set, nvlog
         a->meter.vent_minutes = a->counter.vent_minutes;
         a->meter.depletions = a->counter.depletions;
         a->meter.events.count = a->counter.events;
+        a->meter.leaks = a->counter.leaks;
         /* 1분마다 링에 먼저 쓰고 누적을 나중에 저장함 → 그 사이 전원이 끊기면 링이 한 분 앞섬.
          * 링 마지막 보고가 누적이 아직 안 센 순번이면:
          *   순번은 늘 그 다음으로 (안 그러면 다음 보고가 같은 순번으로 나감),
@@ -253,6 +254,7 @@ rak_err_t app_lora_start(app_t *a)
     a->lora_ready = false;
     a->tx_live = false;
     a->tx_is_lte = false;                   /* 보내던 LTE 결과도 버림 — 남아 있으면 다음 링 기록이 '보냄' 표시를 못 받음 */
+    a->tx_is_cnt = false;
     rak_give_up(a->rak);                    /* 처음부터 다시: 전에 기다리던 소식은 버림 */
     /* 켤 때 셀이 이미 낮으면 가입(송신)부터 하지 않음 — 1분 보고 한 번으로 바로 쉬러 가게 */
     const uint16_t mv0 = a->hw.batt_mv != NULL ? a->hw.batt_mv(a->hw.ctx) : 0u;
@@ -366,6 +368,7 @@ static void do_minute(app_t *a, uint32_t now)
     a->counter.vent_minutes = a->meter.vent_minutes;
     a->counter.depletions = a->meter.depletions;
     a->counter.events = a->meter.events.count;
+    a->counter.leaks = a->meter.leaks;
     a->counter.unix_s = now;
     if (counter_save(a->nv_ctr, &a->counter) != NVLOG_OK) {
         stored = false;
@@ -404,6 +407,7 @@ static bool send_seq(app_t *a, uint32_t seq, bool resend)
     }
     a->tx_live = true;
     a->tx_is_lte = false;
+    a->tx_is_cnt = false;
     a->tx_seq = seq;
     a->tx_start_s = a->hw.now_s(a->hw.ctx);
     return true;
@@ -441,6 +445,8 @@ static void time_sync(app_t *a, uint32_t now)
         a->next_led_s += d;
         a->off_since += d;
         a->next_batt_check_s += d;
+        a->cnt_last_s += d;
+        a->next_cnt_try_s += d;
         char m[48];
         snprintf(m, sizeof(m), "시계 맞춤: %ld 초", (long)diff);
         say(a, m);
@@ -451,6 +457,31 @@ static void time_sync(app_t *a, uint32_t now)
     if (rak_time_request(a->rak, false) == RAK_OK) {
         a->timereq_on = false;              /* 매 송신마다 물어 보지 않게 */
     }
+}
+
+/* 지금 횟수 (누적) */
+static void counts_now(const app_t *a, report_counts_t *c)
+{
+    c->seq = (uint16_t)(a->counter.report_seq - 1u);   /* 마지막으로 만든 1분 보고 */
+    c->cooking = a->meter.events.count;
+    c->depletions = a->meter.depletions;
+    c->vent_minutes = a->meter.vent_minutes;
+    c->leaks = a->meter.leaks;
+}
+
+/* 횟수 보고를 보낼 때인가: 켠 뒤 처음 · 바뀜 · 하루 지남 — 그리고 10분 간격 */
+static bool counts_due(const app_t *a, uint32_t now)
+{
+    if ((int32_t)(now - a->next_cnt_try_s) < 0) {
+        return false;
+    }
+    if (!a->cnt_sent_valid || (int32_t)(now - a->cnt_last_s) >= (int32_t)APP_CNT_DAY_S) {
+        return true;
+    }
+    report_counts_t c;
+    counts_now(a, &c);
+    return c.cooking != a->cnt_sent.cooking || c.depletions != a->cnt_sent.depletions ||
+           c.vent_minutes != a->cnt_sent.vent_minutes || c.leaks != a->cnt_sent.leaks;
 }
 
 static void lora_work(app_t *a, uint32_t now)
@@ -507,9 +538,17 @@ static void lora_work(app_t *a, uint32_t now)
     if (a->tx_live && !a->rak->tx_pending) {
         a->tx_live = false;
         const bool was_lte = a->tx_is_lte;
+        const bool was_cnt = a->tx_is_cnt;
         a->tx_is_lte = false;
+        a->tx_is_cnt = false;
         if (a->rak->last_tx == RAK_EV_TX_DONE || a->rak->last_tx == RAK_EV_CONFIRMED_OK) {
-            if (!was_lte) {
+            if (was_cnt) {
+                a->cnt_sent = a->cnt_sending;
+                a->cnt_sent_valid = true;
+                a->cnt_last_s = now;
+                a->cnt_reports++;
+            }
+            if (!was_lte && !was_cnt) {
                 flash_on(a, true);
                 ring_mark_sent(a->ring, a->tx_seq);
                 flash_on(a, false);
@@ -555,6 +594,23 @@ static void lora_work(app_t *a, uint32_t now)
             a->lte_report_pending = false;
             a->tx_live = true;
             a->tx_is_lte = true;
+            a->tx_is_cnt = false;
+            a->tx_start_s = now;
+        } else if (no_answer(se)) {
+            a->lora_misses++;
+        }
+        return;
+    }
+    if (counts_due(a, now)) {
+        a->next_cnt_try_s = now + APP_CNT_GAP_S;   /* 실패해도 10분 뒤에 다시 */
+        counts_now(a, &a->cnt_sending);
+        uint8_t b[REPORT_COUNTS_LEN];
+        const size_t n = report_counts_encode(&a->cnt_sending, b);
+        const rak_err_t se = rak_send_start(a->rak, APP_CNT_PORT, b, n);
+        if (se == RAK_OK) {
+            a->tx_live = true;
+            a->tx_is_cnt = true;
+            a->tx_is_lte = false;
             a->tx_start_s = now;
         } else if (no_answer(se)) {
             a->lora_misses++;

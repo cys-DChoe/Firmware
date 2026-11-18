@@ -7,6 +7,7 @@ tests/host/run.sh 가 C 가 묶은 값을 이걸로 풀어 맞는지 확인함.
 쓰는 법:
     python3 tools/report_decode.py 0101020...      # 16진 문자열 하나 풀기
     python3 tools/report_decode.py --selftest FILE # 시험 벡터 대조
+    python3 tools/report_decode.py --counts 01...  # 포트 3 횟수 보고 풀기
 """
 import struct
 import sys
@@ -61,12 +62,35 @@ TOL = {"total_nm3": 0.00005, "flow_nm3h": 0.0005, "pg_pa": 0.5, "dp_pa": 0.025,
        "t_c": 0.05, "patm_pa": 0.5, "batt_mv": 5}
 
 
+COUNTS_FMT = ">BHIIII"   # 버전 · 1분 보고 순번 · 조리 · 고갈 · 방출 분 · 누설(계량기 뒤)
+COUNTS_LEN = struct.calcsize(COUNTS_FMT)
+
+
+def decode_counts(buf: bytes) -> dict:
+    """포트 3 횟수 보고 (19 B). 모두 누적값 — 서버는 앞 보고와의 차이로 셈."""
+    if len(buf) != COUNTS_LEN:
+        raise ValueError(f"길이가 {len(buf)} 바이트임 ({COUNTS_LEN} 여야 함)")
+    ver, seq, cooking, depl, vent, leaks = struct.unpack(COUNTS_FMT, buf)
+    if ver != 1:
+        raise ValueError(f"모르는 형식 버전 {ver}")
+    return {"seq": seq, "cooking": cooking, "depletions": depl, "vent_minutes": vent, "leaks": leaks}
+
+
 def selftest(path: str) -> int:
     keys = ["seq", "unix_s", "total_nm3", "flow_nm3h", "pg_pa", "dp_pa", "t_c", "patm_pa", "batt_mv", "flags"]
     bad = n = 0
     for line in open(path, encoding="utf-8"):
         line = line.strip()
         if not line:
+            continue
+        if line.startswith("C:"):
+            hexs, *vals = line[2:].split("|")
+            got = decode_counts(bytes.fromhex(hexs))
+            for k, v in zip(["seq", "cooking", "depletions", "vent_minutes", "leaks"], vals):
+                n += 1
+                if got[k] != int(v):
+                    bad += 1
+                    print(f"  FAIL 횟수 {k}: 파이썬 {got[k]} / C 입력 {v}  ({hexs})")
             continue
         hexs, *vals = line.split("|")
         want = dict(zip(keys, map(float, vals)))
@@ -87,6 +111,10 @@ def selftest(path: str) -> int:
 if __name__ == "__main__":
     if len(sys.argv) == 3 and sys.argv[1] == "--selftest":
         sys.exit(selftest(sys.argv[2]))
+    if len(sys.argv) == 3 and sys.argv[1] == "--counts":
+        for k, v in decode_counts(bytes.fromhex(sys.argv[2])).items():
+            print(f"{k:12s} {v}")
+        sys.exit(0)
     if len(sys.argv) == 2:
         for k, v in decode(bytes.fromhex(sys.argv[1])).items():
             print(f"{k:12s} {v}")

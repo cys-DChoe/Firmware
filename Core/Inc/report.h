@@ -64,5 +64,25 @@ size_t report_encode(const report_t *r, uint8_t out[REPORT_LEN]);
 /* 풀기: 길이 · 버전이 맞으면 true */
 bool report_decode(const uint8_t *in, size_t len, report_t *r);
 
+/* 횟수 보고 (LoRa 포트 3, 11/18) — 1분 보고(24 B · 링 칸 32 B 고정)와 따로 보냄
+ *   바이트  크기  내용 (큰 쪽 먼저)
+ *    0     1    형식 버전 1
+ *    1     2    보낼 때 마지막 1분 보고 순번 (어느 보고 뒤의 횟수인지)
+ *    3     4    조리 이벤트 수 (끝난 것)
+ *    7     4    가스 고갈 수
+ *   11     4    방출 분 수
+ *   15     4    누설(계량기 뒤) 판정이 새로 켜진 수
+ * 모두 켠 뒤부터가 아니라 처음부터 쌓인 값(저장됨) → 하나를 놓쳐도 다음 것으로 따라잡음. 서버는 앞 값과의 차이로 셈. */
+#define REPORT_COUNTS_LEN      19u
+#define REPORT_COUNTS_VERSION  1u
+
+typedef struct {
+    uint16_t seq;
+    uint32_t cooking, depletions, vent_minutes, leaks;
+} report_counts_t;
+
+size_t report_counts_encode(const report_counts_t *c, uint8_t out[REPORT_COUNTS_LEN]);
+bool report_counts_decode(const uint8_t *in, size_t len, report_counts_t *c);
+
 /* 셀 전압 → 배터리 비트 (오르내림 폭 50 mV: 내려갈 땐 문턱 − 50, 다시 올라갈 땐 문턱 + 50) */
 uint16_t report_battery_flags(uint16_t batt_mv, uint16_t prev_flags);

@@ -71,6 +71,7 @@ size_t counter_pack(const counter_t *c, uint8_t *o)
     put_u32(o + 26, c->depletions);
     put_u32(o + 30, c->events);
     put_u32(o + 34, c->unix_s);
+    put_u32(o + 38, c->leaks);
     return PERSIST_COUNTER_LEN;
 }
 
@@ -84,6 +85,7 @@ void counter_unpack(const uint8_t *in, counter_t *c)
     c->depletions = get_u32(in + 26);
     c->events = get_u32(in + 30);
     c->unix_s = get_u32(in + 34);
+    c->leaks = get_u32(in + 38);
 }
 
 nvlog_err_t settings_load(const nvlog_t *l, settings_t *s)

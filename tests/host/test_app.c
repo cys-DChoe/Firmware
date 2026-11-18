@@ -710,7 +710,7 @@ int main(void)
         bool inj = false;
         const uint32_t stop2 = B.now + 300u;
         while (B.now < stop2 && A.time_syncs == syncs0) {
-            if (A.tx_live && !A.tx_is_lte && !inj) {
+            if (A.tx_live && !A.tx_is_lte && !A.tx_is_cnt && A.timereq_on && !inj) {   /* 이 송신이 끝나면 시계를 맞춤 */
                 A.lte_last.code = LTE_R_NO_SIM;     /* 링 기록을 보내는 동안 LTE 결과가 생김 */
                 A.lte_report_pending = true;
                 inj = true;
@@ -820,6 +820,46 @@ int main(void)
         const uint8_t back[3] = {APP_CFG_VENT_P, 0x00, 0x00};
         ok("0 을 보내면 기본값으로", app_downlink(&A, APP_CFG_PORT, back, 3) && A.meter.cfg.vent_p_pa == 98.1 * 20.0);
         idle_gas();
+    }
+
+    printf("횟수 보고 (포트 3, 11/18)\n");
+    {
+        idle_gas();
+        B.batt = 3700;
+        F.ltime[0] = '\0';                         /* 가짜 망 시각은 고정이라 이미 지난 시각 — 시계를 되돌리지 않게 비움 */
+        app_lora_start(&A);
+        push(&F, "+EVT:JOINED\r\n");
+        F.joined = true;
+        run_ack(3 * 60);
+        ok("가입 뒤 한 번 보냄 · 지금 횟수와 같음",
+           A.cnt_reports == 1u && A.cnt_sent.cooking == A.meter.events.count &&
+               A.cnt_sent.depletions == A.meter.depletions && A.cnt_sent.vent_minutes == A.meter.vent_minutes &&
+               A.cnt_sent.leaks == A.meter.leaks &&
+               (uint16_t)(A.counter.report_seq - 1u - A.cnt_sent.seq) <= 3u);
+        const uint32_t n1 = A.cnt_reports;
+        run_ack(60 * 60);
+        ok("횟수가 안 바뀌면 안 보냄 (1시간)", A.cnt_reports == n1);
+
+        const uint32_t ev0 = A.meter.events.count;
+        B.s.dp_raw_pa = 40.8;                       /* 조리 3분 */
+        run_ack(3 * 60);
+        B.s.dp_raw_pa = 0.0;
+        run_ack(3 * 60);
+        ok("조리 한 번 끝남", A.meter.events.count == ev0 + 1u);
+        run_ack(11 * 60);
+        ok("10분 안에 횟수 보고 · 조리 +1", A.cnt_reports == n1 + 1u && A.cnt_sent.cooking == ev0 + 1u);
+
+        const uint32_t n2 = A.cnt_reports;
+        run_ack(30 * 60);
+        ok("그 뒤로 안 바뀌면 다시 안 보냄", A.cnt_reports == n2);
+        A.cnt_last_s -= APP_CNT_DAY_S;              /* 마지막으로 보낸 게 하루 전인 것처럼 */
+        run_ack(11 * 60);
+        ok("안 바뀌어도 하루에 한 번", A.cnt_reports == n2 + 1u);
+
+        A.meter.leaks = 3u;
+        run_ack(70);
+        boot();
+        ok("누설 횟수도 저장 · 다시 켜도 유지", A.meter.leaks == 3u);
     }
 
     printf("\n%d / %d 통과\n", checks - fails, checks);

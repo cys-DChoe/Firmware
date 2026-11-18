@@ -361,7 +361,11 @@ void meter_minute(meter_t *m, meter_minute_t *out)
         } else {
             m->leak_streak = 0;
         }
+        const bool was_leak = m->leak_active;
         m->leak_active = m->leak_streak >= c->leak_windows;
+        if (m->leak_active && !was_leak) {
+            m->leaks++;
+        }
         if (!m->leak_active && m->leak_streak == 0) {
             m->leak_flow_m3h = 0.0;
         }

@@ -11,7 +11,7 @@
 #include "nvlog.h"
 
 #define PERSIST_SETTINGS_LEN  54u   /* 옛 50 · 52 B 판도 읽힘: 빠진 칸은 0 */
-#define PERSIST_COUNTER_LEN   38u
+#define PERSIST_COUNTER_LEN   42u   /* 옛 38 B 판도 읽힘: 누설 횟수는 0 (11/18) */
 
 typedef struct {
     double zero_pa;          /* 영점 Z */
@@ -33,6 +33,7 @@ typedef struct {
     uint32_t depletions;
     uint32_t events;
     uint32_t unix_s;         /* 저장한 시각 */
+    uint32_t leaks;          /* 누설(계량기 뒤) 켜진 횟수 */
 } counter_t;
 
 void settings_default(settings_t *s);

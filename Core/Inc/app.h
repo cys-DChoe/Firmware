@@ -42,6 +42,11 @@
  * 결과는 LoRa 포트 2 로 7 바이트 (lte_result_encode) — 1분 보고 링에는 안 넣음 */
 #define APP_LTE_PORT         2u
 #define APP_LTE_MIN_MV       3650u
+/* 횟수 보고 (포트 3, report.h 표): 횟수가 바뀌면 보내되 10분에 한 번까지, 안 바뀌어도 하루에 한 번.
+ * 켠 뒤 가입하면 한 번 보냄. 1분 보고 · LTE 결과보다 뒤, 밀린 기록 다시 보내기보다 앞 */
+#define APP_CNT_PORT         3u
+#define APP_CNT_GAP_S        600u
+#define APP_CNT_DAY_S        86400u
 #define APP_LTE_GUARD_S       600u    /* 시키지 않았는데 LTE 가 켜져 있는지 보는 간격 (켤 때 한 번 + 10분마다) */
 #define APP_PG_FS_DEFAULT_PA 6000u   /* ABP2DRNT006KG2A3XX (보드 U-S2) */
 #define APP_PG_FS_MIN_PA     1000u
@@ -131,6 +136,12 @@ typedef struct {
     bool lte_want;              /* LTE 시험을 받아 둠 — 다음 app_step 에서 시작 (그때의 up_s 로 재려고) */
     bool lte_report_pending;    /* LTE 시험 결과를 LoRa 로 올릴 차례 */
     bool tx_is_lte;             /* 지금 보내는 것이 LTE 결과 (링 기록 아님) */
+    bool tx_is_cnt;             /* 지금 보내는 것이 횟수 보고 (링 기록 아님) */
+    report_counts_t cnt_sent;   /* 마지막으로 보내진 횟수 */
+    report_counts_t cnt_sending;
+    bool cnt_sent_valid;        /* 켠 뒤 한 번이라도 보냄 */
+    uint32_t cnt_last_s, next_cnt_try_s;
+    uint32_t cnt_reports;       /* 보내진 횟수 보고 수 (로그 · 시험용) */
     lte_result_t lte_last;
     uint32_t lte_refused;       /* 셀이 낮아 안 한 횟수 */
     uint32_t next_lte_guard;    /* up_s 기준 */
