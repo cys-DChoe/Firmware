@@ -309,6 +309,15 @@ static void do_minute(app_t *a, uint32_t now)
     meter_minute(&a->meter, &mm);
     report_t r;
     build_report(a, &mm, now, &r);
+    {
+        /* 보드에서 값을 바로 보게 1분마다 한 줄 (보드 오면 2 · 4 · 7단계) */
+        char m[160];
+        snprintf(m, sizeof(m),
+                 "1분 #%u: 차압 %.2f Pa · 정압 %.0f Pa · 기압 %.0f Pa · 온도 %.1f C · 셀 %u mV · 유량 %.3f Nm3/h · 누적 %.4f Nm3 · 비트 %04X",
+                 (unsigned)r.seq, r.dp_pa, r.pg_pa, r.patm_pa, r.t_c, (unsigned)r.batt_mv, r.flow_nm3h, r.total_nm3,
+                 (unsigned)r.flags);
+        say(a, m);
+    }
     uint8_t bytes[REPORT_LEN];
     report_encode(&r, bytes);
 
@@ -704,6 +713,29 @@ bool app_zero(app_t *a)
     flash_on(a, false);
     char m[48];
     snprintf(m, sizeof(m), "영점 %.3f Pa %s", z, ok ? "저장" : "저장 실패");
+    say(a, m);
+    return ok;
+}
+
+bool app_batt_cal(app_t *a, uint16_t actual_mv)
+{
+    const uint16_t mv = a->hw.batt_mv != NULL ? a->hw.batt_mv(a->hw.ctx) : 0u;   /* 지금 보정값이 들어간 값 */
+    if (mv == 0u || actual_mv < 2000u || actual_mv > 4500u) {
+        say(a, "셀 보정: 못 잼 · 실제 값이 범위 밖 — 안 함");
+        return false;
+    }
+    const int32_t off = (int32_t)a->settings.batt_cal_mv + ((int32_t)actual_mv - (int32_t)mv);
+    if (off > APP_BATT_CAL_MAX_MV || off < -APP_BATT_CAL_MAX_MV) {
+        say(a, "셀 보정: 차이가 너무 큼 (±300 mV) — 멀티미터 값을 다시 볼 것");
+        return false;
+    }
+    a->settings.batt_cal_mv = (int16_t)off;
+    flash_on(a, true);
+    const bool ok = settings_save(a->nv_set, &a->settings) == NVLOG_OK;
+    flash_on(a, false);
+    char m[96];
+    snprintf(m, sizeof(m), "셀 보정: 잰 값 %u mV → 실제 %u mV, 보정값 %+ld mV %s", (unsigned)mv, (unsigned)actual_mv,
+             (long)off, ok ? "저장" : "저장 실패");
     say(a, m);
     return ok;
 }

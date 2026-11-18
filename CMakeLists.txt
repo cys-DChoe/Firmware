@@ -86,6 +86,10 @@ option(LTE_TEST_AT_BOOT "켤 때 LTE 시험을 한 번 함 (벤치용)" OFF)
 if(LTE_TEST_AT_BOOT)
   target_compile_definitions(${PROJECT_NAME}.elf PRIVATE LTE_TEST_AT_BOOT)
 endif()
+set(BATT_CAL_ACTUAL_MV 0 CACHE STRING "셀 보정: 멀티미터로 잰 셀 전압 mV (0 = 안 함, 벤치용 — 끝나면 0 으로)")
+if(BATT_CAL_ACTUAL_MV GREATER 0)
+  target_compile_definitions(${PROJECT_NAME}.elf PRIVATE BATT_CAL_ACTUAL_MV=${BATT_CAL_ACTUAL_MV})
+endif()
 target_include_directories(${PROJECT_NAME}.elf PRIVATE
   Core/Inc
   ${DEV}/Include

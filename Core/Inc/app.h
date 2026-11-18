@@ -71,6 +71,9 @@
  *   빨강 2번 = 센서 문제 (차압 · 정압을 못 읽음 · 기압을 못 재 마지막 값으로 계산 중) — 통신 문제보다 먼저 보임
  *   빨강 3번 = 저장 문제 (1분 기록 · 누적을 저장 못 함 — 그 기록은 못 보냄) — 가장 먼저 보임 (11/18)
  *   셀이 낮아 쉴 때는 안 깜빡임 */
+/* 셀 전압 1점 보정 (보드 오면 4단계): 멀티미터로 잰 실제 전압을 주면 지금 잰 값과의 차이를 보정값으로 저장.
+ * 나눔 저항 · VREFINT 오차라 크지 않음 → 이보다 크면 잘못 넣은 것으로 보고 안 받음 */
+#define APP_BATT_CAL_MAX_MV  300
 #define APP_LED_PERIOD_S     10u
 #define APP_LED_OK           0u
 #define APP_LED_LORA         1u
@@ -167,3 +170,6 @@ uint16_t app_pg_fs_pa(const app_t *a);
 void app_set_lte(app_t *a, lte_t *lte);
 bool app_lte_test(app_t *a);
 bool app_set_keys(app_t *a, const uint8_t dev_eui[8], const uint8_t app_eui[8], const uint8_t app_key[16]);
+/* 셀 전압 보정: actual_mv = 멀티미터로 잰 셀 전압. 지금 잰 값과 맞도록 보정값을 고쳐 저장 (다시 켜도 유지).
+ * 셀을 못 재거나 범위 밖(2.0–4.5 V, 보정 ±300 mV 넘음)이면 false */
+bool app_batt_cal(app_t *a, uint16_t actual_mv);

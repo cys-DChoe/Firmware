@@ -34,6 +34,8 @@ typedef struct {
     uint16_t batt;
     int flash_on_calls;
     char last_log[96];
+    int minute_logs;            /* "1분 #" 로 시작하는 로그 수 */
+    char minute_log[192];
 } board_t;
 
 static board_t B;
@@ -46,14 +48,28 @@ static bool b_read(void *ctx, meter_sample_t *s)
 }
 static uint32_t b_now(void *ctx) { return ((board_t *)ctx)->now; }
 static bool b_time(void *ctx) { return ((board_t *)ctx)->time_ok; }
-static uint16_t b_batt(void *ctx) { return ((board_t *)ctx)->batt; }
+static app_t A;
+/* 실제 보드처럼 잰 값에 저장된 보정값이 더해짐 */
+static uint16_t b_batt(void *ctx)
+{
+    const board_t *b = ctx;
+    return b->batt != 0u ? (uint16_t)(b->batt + A.settings.batt_cal_mv) : 0u;
+}
 static void b_flash(void *ctx, bool on)
 {
     if (on) {
         ((board_t *)ctx)->flash_on_calls++;
     }
 }
-static void b_log(void *ctx, const char *m) { snprintf(((board_t *)ctx)->last_log, 96, "%s", m); }
+static void b_log(void *ctx, const char *m)
+{
+    board_t *b = ctx;
+    snprintf(b->last_log, sizeof(b->last_log), "%s", m);
+    if (strncmp(m, "1분 #", strlen("1분 #")) == 0) {
+        b->minute_logs++;
+        snprintf(b->minute_log, sizeof(b->minute_log), "%s", m);
+    }
+}
 static bool b_set_time(void *ctx, uint32_t t)
 {
     board_t *b = ctx;
@@ -742,6 +758,35 @@ int main(void)
         ok("쉬러 감", seen && A.batt_off && B.now - t0 >= 200u);
         ok("쉬는 동안 다시 보냄 0번 · 송신은 마지막 보고 하나", A.resends == r0 && A.sent - s0 <= 1u && !A.tx_live);
         B.batt = 3700;
+    }
+
+    printf("1분마다 로그에 값 한 줄 (보드 오면 2 · 4 · 7단계)\n");
+    {
+        B.batt = 3700;
+        idle_gas();
+        run_ack(11 * 60);                           /* 앞 시험의 쉼에서 다시 시작할 때까지 */
+        const int n0 = B.minute_logs;
+        run_ack(60);
+        ok("1분에 한 줄", B.minute_logs == n0 + 1);
+        ok("값이 들어 있음 (정압 600 · 기압 101000 · 셀 3700)",
+           strstr(B.minute_log, "정압 600 Pa") != NULL && strstr(B.minute_log, "기압 101000 Pa") != NULL &&
+               strstr(B.minute_log, "셀 3700 mV") != NULL && strstr(B.minute_log, "누적") != NULL);
+    }
+
+    printf("셀 전압 1점 보정 (보드 오면 4단계)\n");
+    {
+        B.batt = 3600;                              /* 보드가 잰 값 */
+        ok("멀티미터 3650 mV → 보정 +50 저장", app_batt_cal(&A, 3650) && A.settings.batt_cal_mv == 50 &&
+                                                      b_batt(&B) == 3650u);
+        boot();
+        ok("다시 켜도 보정값 유지", A.settings.batt_cal_mv == 50);
+        ok("다시 맞추면 보정값을 고쳐 씀 (3640 → +40)", app_batt_cal(&A, 3640) && A.settings.batt_cal_mv == 40);
+        ok("차이가 300 mV 넘으면 안 받음", !app_batt_cal(&A, 4000) && A.settings.batt_cal_mv == 40);
+        ok("실제 값이 말이 안 되면 안 받음", !app_batt_cal(&A, 1500) && A.settings.batt_cal_mv == 40);
+        B.batt = 0;
+        ok("셀을 못 재면 안 함", !app_batt_cal(&A, 3600) && A.settings.batt_cal_mv == 40);
+        B.batt = 3600;
+        ok("되돌리기 (3600 → 0)", app_batt_cal(&A, 3600) && A.settings.batt_cal_mv == 0);
     }
 
     printf("\n%d / %d 통과\n", checks - fails, checks);
