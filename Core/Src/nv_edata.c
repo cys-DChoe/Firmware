@@ -1,7 +1,8 @@
 #include "main.h"
 #include "nv_edata.h"
 
-static volatile uint32_t s_ecc_reads;     /* 안 쓴 칸 · 깨진 칸을 읽어 난 ECC 오류 수 (로그용) */
+static volatile uint32_t s_ecc_reads;
+static volatile bool s_reading;           /* rd() 가 EDATA 를 읽는 중 */     /* 안 쓴 칸 · 깨진 칸을 읽어 난 ECC 오류 수 (로그용) */
 
 static uint32_t abs_addr(uint32_t off) { return NV_EDATA_BASE_ADDR + off; }
 
@@ -12,11 +13,13 @@ static int rd(void *ctx, uint32_t off, uint8_t *b, size_t n)
     if ((off & 1u) != 0u || (n & 1u) != 0u || off + n > NV_EDATA_SECTORS * NV_EDATA_SECTOR_SIZE) {
         return -1;
     }
+    s_reading = true;
     for (size_t i = 0; i < n; i += 2u) {
         const uint16_t v = *(volatile const uint16_t *)abs_addr(off + (uint32_t)i);
         b[i] = (uint8_t)v;
         b[i + 1u] = (uint8_t)(v >> 8);
     }
+    s_reading = false;
     return 0;
 }
 
@@ -100,8 +103,10 @@ bool nv_edata_nmi(void)
     if (__HAL_FLASH_GET_FLAG(FLASH_FLAG_ECCD) == 0u) {
         return false;
     }
-    if (READ_BIT(FLASH->ECCDETR, FLASH_ECCR_DATA_ECC) == 0u) {
-        return false;                   /* EDATA 가 아닌 곳(프로그램 · OTP 등)의 이중 오류 — 넘기지 않고 오류 재시작 (11/18 검수) */
+    if (READ_BIT(FLASH->ECCDETR, FLASH_ECCR_DATA_ECC) == 0u && !s_reading) {
+        /* EDATA 가 아닌 곳(프로그램 · OTP 등)의 이중 오류 — 넘기지 않고 오류 재시작 (11/18 검수).
+         * rd() 가 읽는 중이면 칩이 '데이터 영역' 표시를 안 세워도 넘김 — 빈 칸 읽기로 켜자마자 재시작이 되풀이되지 않게 (11/18 6차 검수) */
+        return false;
     }
     /* RM0481: ECCD 면 ICACHE 를 무효화. 안 쓴 칸이면 ECCDR = 0xFFFF, 아니면 쓰다 끊긴 칸 —
      * 둘 다 읽힌 값으로 CRC 가 틀려 nvlog 가 버리므로 여기선 지우고 돌아감 */

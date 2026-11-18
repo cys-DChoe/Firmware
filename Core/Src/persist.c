@@ -35,7 +35,7 @@ size_t settings_pack(const settings_t *s, uint8_t *o)
     put_f64(o + 0, s->zero_pa);
     put_f64(o + 8, s->vent_p_pa);
     o[16] = s->band;
-    o[17] = (uint8_t)((s->zero_set ? 1u : 0u) | (s->keys_set ? 2u : 0u));
+    o[17] = (uint8_t)((s->zero_set ? 1u : 0u) | (s->keys_set ? 2u : 0u) | (s->batt_cal_set ? 4u : 0u));
     memcpy(o + 18, s->dev_eui, 8);
     memcpy(o + 26, s->app_eui, 8);
     memcpy(o + 34, s->app_key, 16);
@@ -53,6 +53,7 @@ void settings_unpack(const uint8_t *in, settings_t *s)
     s->band = in[16];
     s->zero_set = (in[17] & 1u) != 0u;
     s->keys_set = (in[17] & 2u) != 0u;
+    s->batt_cal_set = (in[17] & 4u) != 0u;
     memcpy(s->dev_eui, in + 18, 8);
     memcpy(s->app_eui, in + 26, 8);
     memcpy(s->app_key, in + 34, 16);
@@ -72,6 +73,7 @@ size_t counter_pack(const counter_t *c, uint8_t *o)
     put_u32(o + 30, c->events);
     put_u32(o + 34, c->unix_s);
     put_u32(o + 38, c->leaks);
+    o[42] = c->leak_active ? 1u : 0u;
     return PERSIST_COUNTER_LEN;
 }
 
@@ -86,6 +88,7 @@ void counter_unpack(const uint8_t *in, counter_t *c)
     c->events = get_u32(in + 30);
     c->unix_s = get_u32(in + 34);
     c->leaks = get_u32(in + 38);
+    c->leak_active = (in[42] & 1u) != 0u;
 }
 
 nvlog_err_t settings_load(const nvlog_t *l, settings_t *s)

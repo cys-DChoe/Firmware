@@ -768,6 +768,23 @@ int main(void)
         const int n0 = B.minute_logs;
         run_ack(60);
         ok("1분에 한 줄", B.minute_logs == n0 + 1);
+        {
+            const uint16_t keep = A.counter.report_seq;
+            const double keep_tot = A.meter.total_nm3;
+            A.counter.report_seq = 54321u;
+            A.meter.total_nm3 = 1234.5678;
+            B.s.patm_pa = 115535.0;
+            run_ack(60);
+            const size_t L = strlen(B.minute_log);
+            ok("값이 다 커도 줄 끝(상태 비트 4자리)까지 안 잘림",
+               L > 8u && strstr(B.minute_log, "#54321") != NULL && strstr(B.minute_log, "누적 1234.") != NULL &&
+                   strstr(B.minute_log, "비트 ") == B.minute_log + L - 4 - strlen("비트 ") &&
+                   strspn(B.minute_log + L - 4, "0123456789ABCDEF") == 4u);
+            A.counter.report_seq = keep;
+            A.meter.total_nm3 = keep_tot;
+            idle_gas();
+            run_ack(2 * 60);                        /* 바뀐 기압이 섞이지 않은 분까지 */
+        }
         ok("값이 들어 있음 (정압 600 · 기압 101000 · 셀 3700)",
            strstr(B.minute_log, "정압 600 Pa") != NULL && strstr(B.minute_log, "기압 101000 Pa") != NULL &&
                strstr(B.minute_log, "셀 3700 mV") != NULL && strstr(B.minute_log, "누적") != NULL);
@@ -787,6 +804,16 @@ int main(void)
         ok("셀을 못 재면 안 함", !app_batt_cal(&A, 3600) && A.settings.batt_cal_mv == 40);
         B.batt = 3600;
         ok("되돌리기 (3600 → 0)", app_batt_cal(&A, 3600) && A.settings.batt_cal_mv == 0);
+        ok("빌드 옵션용: 이미 넣었으면 다시 안 맞춤", A.settings.batt_cal_set && !app_batt_cal_once(&A, 3650) &&
+                                                     A.settings.batt_cal_mv == 0);
+        B.batt = 3300;                              /* 셀이 실제로 낮아짐 */
+        boot();
+        ok("그 판을 그대로 다시 켜도 낮아진 셀을 덮지 않음", !app_batt_cal_once(&A, 3650) && b_batt(&B) == 3300u);
+        A.settings.batt_cal_set = false;
+        B.batt = 3600;
+        ok("아직 안 넣었으면 한 번 맞춤", app_batt_cal_once(&A, 3610) && A.settings.batt_cal_mv == 10 &&
+                                            A.settings.batt_cal_set);
+        ok("되돌리기", app_batt_cal(&A, 3600) && A.settings.batt_cal_mv == 0);
     }
 
     printf("방출 기준(물트랩 압력)을 설정 명령으로 넣기\n");
@@ -860,6 +887,53 @@ int main(void)
         run_ack(70);
         boot();
         ok("누설 횟수도 저장 · 다시 켜도 유지", A.meter.leaks == 3u);
+
+        printf("횟수 보고 고친 것 (11/18 6차 검수)\n");
+        app_lora_start(&A);
+        push(&F, "+EVT:JOINED\r\n");
+        F.joined = true;
+        run_ack(3 * 60);
+        /* 방출 중: 방출 분이 매분 늘어도 그것만으로는 안 보냄 */
+        const uint8_t vset[3] = {APP_CFG_VENT_P, 0x03, 0xD5};
+        app_downlink(&A, APP_CFG_PORT, vset, 3);
+        B.s.pg_pa = 960.0;
+        const uint32_t nv = A.cnt_reports, v0 = A.meter.vent_minutes;
+        run_ack(40 * 60);
+        ok("방출 중 방출 분은 늘지만 횟수 보고는 안 나감", A.meter.vent_minutes > v0 + 20u && A.cnt_reports == nv);
+        const uint8_t vback[3] = {APP_CFG_VENT_P, 0x00, 0x00};
+        app_downlink(&A, APP_CFG_PORT, vback, 3);
+        idle_gas();
+        run_ack(2 * 60);
+
+        /* 누설 판정 중에 다시 켜져도 같은 누설을 또 세지 않음 */
+        B.s.dp_raw_pa = A.meter.zero_pa + 0.35;     /* 누설 문턱 0.3 Pa 위, 조리 문턱 아래 */
+        const uint32_t l0 = A.meter.leaks;
+        run_ack(2u * 3600u + 20u * 60u);
+        ok("작은 차압 2시간 → 누설 한 번", A.meter.leak_active && A.meter.leaks == l0 + 1u);
+        boot();
+        ok("다시 켜도 누설 판정 중 그대로", A.meter.leak_active && A.meter.leaks == l0 + 1u);
+        run_ack(2u * 3600u + 20u * 60u);
+        ok("같은 누설을 또 세지 않음", A.meter.leak_active && A.meter.leaks == l0 + 1u);
+        idle_gas();
+        run_ack(40 * 60);
+
+        /* 새 계량기: 1분 보고를 만들기 전엔 횟수 보고를 안 보냄 */
+        app_lora_start(&A);                         /* 위에서 다시 켰으니 LoRa 도 다시 */
+        push(&F, "+EVT:JOINED\r\n");
+        F.joined = true;
+        run_ack(3 * 60);
+        A.reports = 0u;
+        A.counter.report_seq = 0u;
+        A.cnt_sent_valid = false;
+        A.next_cnt_try_s = 0u;
+        const uint32_t nn = A.cnt_reports;
+        B.now += 60u - (B.now % 60u) + 5u;          /* 분 경계 5초 뒤로 */
+        A.last_s = B.now;
+        A.last_minute = B.now / 60u;
+        run_ack(40);
+        ok("첫 1분 보고 전엔 안 보냄", A.cnt_reports == nn);
+        run_ack(2 * 60);
+        ok("첫 1분 보고 뒤 보냄 · 보고 번호 칸 0 (65535 아님)", A.cnt_reports == nn + 1u && A.cnt_sent.seq == 0u);
     }
 
     printf("\n%d / %d 통과\n", checks - fails, checks);

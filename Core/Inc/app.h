@@ -42,8 +42,9 @@
  * 결과는 LoRa 포트 2 로 7 바이트 (lte_result_encode) — 1분 보고 링에는 안 넣음 */
 #define APP_LTE_PORT         2u
 #define APP_LTE_MIN_MV       3650u
-/* 횟수 보고 (포트 3, report.h 표): 횟수가 바뀌면 보내되 10분에 한 번까지, 안 바뀌어도 하루에 한 번.
- * 켠 뒤 가입하면 한 번 보냄. 1분 보고 · LTE 결과보다 뒤, 밀린 기록 다시 보내기보다 앞 */
+/* 횟수 보고 (포트 3, report.h 표): 조리 · 고갈 · 누설 횟수가 바뀌면 보내되 10분에 한 번까지, 안 바뀌어도 하루에 한 번.
+ * 방출 분은 방출 중 매분 늘어서 그것만으로는 안 보냄. 켠 뒤 가입하면 한 번 (새 계량기는 첫 1분 보고 뒤).
+ * 1분 보고 · LTE 결과보다 뒤, 밀린 기록 다시 보내기보다 앞 */
 #define APP_CNT_PORT         3u
 #define APP_CNT_GAP_S        600u
 #define APP_CNT_DAY_S        86400u
@@ -191,3 +192,6 @@ bool app_set_keys(app_t *a, const uint8_t dev_eui[8], const uint8_t app_eui[8], 
 /* 셀 전압 보정: actual_mv = 멀티미터로 잰 셀 전압. 지금 잰 값과 맞도록 보정값을 고쳐 저장 (다시 켜도 유지).
  * 셀을 못 재거나 범위 밖(2.0–4.5 V, 보정 ±300 mV 넘음)이면 false */
 bool app_batt_cal(app_t *a, uint16_t actual_mv);
+/* 빌드 옵션 BATT_CAL_ACTUAL_MV 용: 보정을 아직 안 넣었을 때만 한 번 맞춤.
+ * 그 판을 0 으로 안 되돌려도 켤 때마다 다시 맞추지 않음 — 다시 맞추면 셀이 낮아진 걸 보정값이 덮어 저전압 보호가 안 걸림 (11/18 검수) */
+bool app_batt_cal_once(app_t *a, uint16_t actual_mv);

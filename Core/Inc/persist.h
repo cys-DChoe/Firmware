@@ -11,7 +11,7 @@
 #include "nvlog.h"
 
 #define PERSIST_SETTINGS_LEN  54u   /* 옛 50 · 52 B 판도 읽힘: 빠진 칸은 0 */
-#define PERSIST_COUNTER_LEN   42u   /* 옛 38 B 판도 읽힘: 누설 횟수는 0 (11/18) */
+#define PERSIST_COUNTER_LEN   43u   /* 옛 38 · 42 B 판도 읽힘: 빠진 칸은 0 (11/18) */
 
 typedef struct {
     double zero_pa;          /* 영점 Z */
@@ -19,6 +19,7 @@ typedef struct {
     uint8_t band;            /* LoRa 대역 7 = KR920 · 4 = EU868 */
     bool zero_set;
     bool keys_set;
+    bool batt_cal_set;       /* 셀 보정을 한 번 넣었음 (빌드 옵션으로 켤 때마다 다시 맞추지 않게, 11/18) */
     uint8_t dev_eui[8], app_eui[8], app_key[16];
     int16_t batt_cal_mv;     /* 셀 전압 1점 보정값 (생산 때 실제 전압 − 잰 값) */
     uint16_t pg_fs_pa;       /* 정압 센서 만점 Pa — 0 = 기본(ABP2 006KG, 6000). 2.5 kPa 품번으로 바꾸면 2500 (11/17) */
@@ -34,6 +35,7 @@ typedef struct {
     uint32_t events;
     uint32_t unix_s;         /* 저장한 시각 */
     uint32_t leaks;          /* 누설(계량기 뒤) 켜진 횟수 */
+    bool leak_active;        /* 지금 누설 판정 중 — 다시 켠 뒤 같은 누설을 또 세지 않게 */
 } counter_t;
 
 void settings_default(settings_t *s);

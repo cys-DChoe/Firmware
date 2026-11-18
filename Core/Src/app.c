@@ -59,6 +59,11 @@ void app_init(app_t *a, const app_hw_t *hw, ring_t *ring, nvlog_t *nv_set, nvlog
         a->meter.depletions = a->counter.depletions;
         a->meter.events.count = a->counter.events;
         a->meter.leaks = a->counter.leaks;
+        if (a->counter.leak_active) {
+            /* 누설 판정 중에 다시 켜짐: 판정을 이어 감 (안 그러면 2시간 뒤 다시 켜지며 한 번 더 셈) */
+            a->meter.leak_active = true;
+            a->meter.leak_streak = a->meter.cfg.leak_windows;
+        }
         /* 1분마다 링에 먼저 쓰고 누적을 나중에 저장함 → 그 사이 전원이 끊기면 링이 한 분 앞섬.
          * 링 마지막 보고가 누적이 아직 안 센 순번이면:
          *   순번은 늘 그 다음으로 (안 그러면 다음 보고가 같은 순번으로 나감),
@@ -341,7 +346,7 @@ static void do_minute(app_t *a, uint32_t now)
     build_report(a, &mm, now, &r);
     {
         /* 보드에서 값을 바로 보게 1분마다 한 줄 (보드 오면 2 · 4 · 7단계) */
-        char m[160];
+        char m[224];                    /* 보통 155 B, 값이 다 커도 180 B 안 (11/18 검수: 160 이면 끝이 잘림) */
         snprintf(m, sizeof(m),
                  "1분 #%u: 차압 %.2f Pa · 정압 %.0f Pa · 기압 %.0f Pa · 온도 %.1f C · 셀 %u mV · 유량 %.3f Nm3/h · 누적 %.4f Nm3 · 비트 %04X",
                  (unsigned)r.seq, r.dp_pa, r.pg_pa, r.patm_pa, r.t_c, (unsigned)r.batt_mv, r.flow_nm3h, r.total_nm3,
@@ -369,6 +374,7 @@ static void do_minute(app_t *a, uint32_t now)
     a->counter.depletions = a->meter.depletions;
     a->counter.events = a->meter.events.count;
     a->counter.leaks = a->meter.leaks;
+    a->counter.leak_active = a->meter.leak_active;
     a->counter.unix_s = now;
     if (counter_save(a->nv_ctr, &a->counter) != NVLOG_OK) {
         stored = false;
@@ -475,13 +481,16 @@ static bool counts_due(const app_t *a, uint32_t now)
     if ((int32_t)(now - a->next_cnt_try_s) < 0) {
         return false;
     }
+    if (a->reports == 0u && a->counter.report_seq == 0u) {
+        return false;                       /* 새 계량기: 1분 보고를 하나 만든 뒤부터 (보고 번호 칸이 65535 로 나가지 않게) */
+    }
     if (!a->cnt_sent_valid || (int32_t)(now - a->cnt_last_s) >= (int32_t)APP_CNT_DAY_S) {
         return true;
     }
     report_counts_t c;
     counts_now(a, &c);
-    return c.cooking != a->cnt_sent.cooking || c.depletions != a->cnt_sent.depletions ||
-           c.vent_minutes != a->cnt_sent.vent_minutes || c.leaks != a->cnt_sent.leaks;
+    /* 방출 분은 방출 중 매분 늘어남 → 그것만으로는 안 보냄 (방출 여부는 1분 보고 비트로 앎). 다른 것과 같이 · 하루 한 번 실림 */
+    return c.cooking != a->cnt_sent.cooking || c.depletions != a->cnt_sent.depletions || c.leaks != a->cnt_sent.leaks;
 }
 
 static void lora_work(app_t *a, uint32_t now)
@@ -814,6 +823,7 @@ bool app_batt_cal(app_t *a, uint16_t actual_mv)
         return false;
     }
     a->settings.batt_cal_mv = (int16_t)off;
+    a->settings.batt_cal_set = true;
     flash_on(a, true);
     const bool ok = settings_save(a->nv_set, &a->settings) == NVLOG_OK;
     flash_on(a, false);
@@ -822,6 +832,18 @@ bool app_batt_cal(app_t *a, uint16_t actual_mv)
              (long)off, ok ? "저장" : "저장 실패");
     say(a, m);
     return ok;
+}
+
+bool app_batt_cal_once(app_t *a, uint16_t actual_mv)
+{
+    if (a->settings.batt_cal_set) {
+        char m[160];
+        snprintf(m, sizeof(m), "셀 보정: 이미 있음(%+d mV) — 다시 안 맞춤. 이 판은 BATT_CAL_ACTUAL_MV=0 으로 다시 구울 것",
+                 (int)a->settings.batt_cal_mv);
+        say(a, m);
+        return false;
+    }
+    return app_batt_cal(a, actual_mv);
 }
 
 bool app_set_keys(app_t *a, const uint8_t dev_eui[8], const uint8_t app_eui[8], const uint8_t app_key[16])
