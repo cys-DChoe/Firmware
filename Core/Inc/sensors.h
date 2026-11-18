@@ -13,6 +13,8 @@
 /* 전원을 켠 뒤 기다리는 시간: 센서 시작 시간(HSC 3 · ABP2 2.5 · BMP390 2 ms)에
  * 센서 전원(U9 승압) 안정 여유를 더함 — 보드에서 재고 줄일 수 있음 */
 #define SENSORS_POWER_ON_MS  15u
+/* 기압 센서(BMP390)가 설정 안 된 채면 이만큼 읽을 때마다 다시 설정해 봄 (평소 10 s × 6 = 1분, 조리 중 6 s) */
+#define SENSORS_BMP_RETRY    6u
 
 typedef struct {
     const i2c_bus_t *bus_dp;        /* I2C2: HSC */
@@ -23,7 +25,9 @@ typedef struct {
     bmp390_t bmp;
     bool powered;
     bool bmp_ready;
-    double patm_fallback_pa;        /* 기압 센서 실패 때 쓸 값 (마지막 정상값) */
+    uint8_t bmp_retry_n;            /* 설정 안 된 채 읽은 횟수 (다시 설정해 볼 때까지) */
+    uint32_t bmp_reinits;           /* 다시 설정해서 살아난 횟수 (로그용) */
+    double patm_fallback_pa;        /* 기압 센서 실패 때 쓸 값 (마지막 정상값, 처음엔 해수면 101,325 Pa) */
 } sensors_t;
 
 typedef struct {
@@ -40,5 +44,7 @@ void sensors_power_off(sensors_t *s);   /* SENS_EN 만 내림 = HSC 레일. ABP2
 
 /* 한 번 읽기 (약 17 ms: ABP2 5 ms + BMP390 11 ms).
  * 가스 온도는 BMP390 온도를 씀 — 계산식 문서 "우리 부품" 메모: 함체 안 온도라 근사값임.
- * 기압이 실패하면 마지막 정상 기압으로 대신하고 e_baro 에 남김. */
+ * 기압이 실패하면 마지막 정상 기압으로 대신하고 e_baro 와 sample.patm_held 에 남김.
+ * 켤 때 기압 센서가 답이 없었으면 SENSORS_BMP_RETRY 번 읽을 때마다 다시 설정해 봄 (11/18 검수:
+ * 전엔 한 번 실패하면 계속 해수면 값으로 계산 — 나이로비 높이면 사용량 +11 %). */
 void sensors_read(sensors_t *s, sensors_result_t *r);

@@ -101,14 +101,16 @@ void wdg_fault(uint32_t code, uint32_t info, uint32_t cfsr)
 {
     __disable_irq();
     HAL_GPIO_WritePin(LED_RED_PORT, LED_RED_PIN, GPIO_PIN_SET);
-    if (debugger_on()) {
-        while (1) {                 /* 디버거로 보려고 여기 멈춤 (워치독은 디버거가 멈출 때만 멈춤) */
-        }
-    }
+    /* 원인부터 적음: 디버거를 붙였다 뗀 보드는 껐다 켤 때까지 '붙어 있음'으로 읽혀 아래에서 멈추고,
+     * 30 s 뒤 워치독으로 재시작함 — 그때도 원인이 남아 있게 (11/18 검수) */
     bkp_access();
     TAMP->BKP0R = BKP_MAGIC | (code & 0xFFu);
     TAMP->BKP1R = info;
     TAMP->BKP3R = cfsr;
+    if (debugger_on()) {
+        while (1) {                 /* 디버거로 보려고 여기 멈춤 (워치독은 디버거가 코어를 세울 때만 멈춤) */
+        }
+    }
     if (TAMP->BKP2R + 1u >= STREAK_STANDBY) {
         /* 이어서 3번째 — 바로 다시 켜지 않고 잠. 워치독이 30 s 뒤 재시작시킴 (Standby 에서 나오는 것도 재시작) */
         /* 걸려 있는 인터럽트(1 ms SysTick · LoRa 글자 등)가 하나라도 있으면 WFI 가 바로 돌아와 못 쉼 → 모두 끄고 지움 */

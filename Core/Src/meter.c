@@ -89,7 +89,7 @@ void meter_default_cfg(meter_cfg_t *c)
     c->leak_dp_min_pa = 0.3;        /* 임시 — 센서 잡음을 벤치에서 재고 정함 */
 
     c->dp_full_scale_pa = 1000.0;   /* HSC ±10 mbar */
-    c->pg_full_scale_pa = 6000.0;   /* ABP2DRNT006KG: 0–6 kPa 게이지 (PCB3_2 부품, 동인님 시트 범위 0–2.5 kPa 와 합의 필요) */
+    c->pg_full_scale_pa = 6000.0;   /* ABP2DRNT006KG: 0–6 kPa 게이지 (스펙 시트대로 확정 11/17, 다른 품번은 설정 명령으로) */
 }
 
 void meter_init(meter_t *m, const meter_cfg_t *cfg)

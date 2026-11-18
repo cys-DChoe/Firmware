@@ -29,7 +29,7 @@ typedef struct {
     double pg_fs;               /* 앱이 알려 준 정압 센서 만점 */
     bool saving;                /* 셀이 낮아 쉬는 중 (센서 · LED 끔) */
     int save_calls;
-    int led_green, led_red1, led_red2;     /* LED 깜빡임 횟수 (초록 1번 · 빨강 1번 · 빨강 2번) */
+    int led_green, led_red1, led_red2, led_red3;   /* LED 깜빡임 횟수 (초록 1번 · 빨강 1 · 2 · 3번) */
     bool time_ok;
     uint16_t batt;
     int flash_on_calls;
@@ -76,11 +76,13 @@ static void b_led(void *ctx, bool red, uint8_t blinks)
         b->led_green++;
     } else if (blinks == 1u) {
         b->led_red1++;
-    } else {
+    } else if (blinks == 2u) {
         b->led_red2++;
+    } else {
+        b->led_red3++;
     }
 }
-static void led_zero(void) { B.led_green = B.led_red1 = B.led_red2 = 0; }
+static void led_zero(void) { B.led_green = B.led_red1 = B.led_red2 = B.led_red3 = 0; }
 static const app_hw_t HW = {b_read, b_now, b_time, b_batt, b_flash, b_log, &B, b_set_time, b_set_pg_fs, b_power_save, b_led};
 
 static fake_lte_t FL;
@@ -647,6 +649,99 @@ int main(void)
         FL.key_off_ignored = false;
         run_ack(11 * 60);
         ok("10분 뒤 다시 해서 끔", A.lte_left_on == 3u && !FL.on && A.lte_last.off != LTE_OFF_FAILED);
+    }
+
+    printf("기압을 못 재면 보고 · LED 에 보임 (11/18 검수)\n");
+    {
+        run_ack(60);
+        B.s.patm_held = true;
+        led_zero();
+        run_ack(60);
+        ok("그 분 보고에 BARO_HELD 비트", last_report(&r) && (r.flags & REPORT_F_BARO_HELD));
+        ok("LED 빨강 2번 (센서 문제)", B.led_red2 > 0 && B.led_green == 0);
+        B.s.patm_held = false;
+        run_ack(70);
+        led_zero();
+        run_ack(60);
+        ok("다시 재면 비트 · 빨강 없음", last_report(&r) && !(r.flags & REPORT_F_BARO_HELD) && B.led_red2 == 0);
+    }
+
+    printf("1분 기록을 저장 못 하면 LED 빨강 3번\n");
+    {
+        C.dead = true;
+        run_ack(70);                                /* 분 경계를 지나며 저장 실패 */
+        led_zero();
+        run_ack(20);
+        ok("저장 실패 → 빨강 3번 (다른 표시보다 먼저)", A.store_failed && B.led_red3 > 0 && B.led_green == 0);
+        C.dead = false;
+        run_ack(70);
+        led_zero();
+        run_ack(30);
+        ok("다시 저장되면 빨강 3번 꺼짐", !A.store_failed && B.led_red3 == 0);
+    }
+
+    printf("시계를 맞춘 바로 그 걸음에 LTE 결과를 보내도 '소식 없음'으로 안 셈 (11/18 검수)\n");
+    {
+        run_ack(70);
+        const uint32_t real2 = B.now + 2u * 3600u;
+        lp_civil_t c2;
+        lp_civil_from_unix(real2, &c2);
+        snprintf(F.ltime, sizeof(F.ltime), "%02uh%02um%02us on %02u/%02u/%04u", c2.hour, c2.min, c2.sec, c2.month,
+                 c2.day, c2.year);
+        A.time_synced = false;                      /* 하루가 지난 것처럼 다시 맞추게 */
+        A.timereq_on = false;
+        const uint32_t syncs0 = A.time_syncs, to0 = A.tx_timeouts;
+        bool inj = false;
+        const uint32_t stop2 = B.now + 300u;
+        while (B.now < stop2 && A.time_syncs == syncs0) {
+            if (A.tx_live && !A.tx_is_lte && !inj) {
+                A.lte_last.code = LTE_R_NO_SIM;     /* 링 기록을 보내는 동안 LTE 결과가 생김 */
+                A.lte_report_pending = true;
+                inj = true;
+            }
+            const uint32_t ms = app_step(&A);
+            if (R.tx_pending && !A.tx_is_lte) {
+                push(&F, "+EVT:TX_DONE\r\n");
+            }
+            B.now += ms / 1000u;
+            F.clock += ms;
+        }
+        ok("시계를 2시간 앞으로 맞추고 같은 걸음에 LTE 결과 송신 시작",
+           A.time_syncs == syncs0 + 1u && A.tx_live && A.tx_is_lte && B.now >= real2);
+        const uint32_t ms = app_step(&A);
+        B.now += ms / 1000u;
+        F.clock += ms;
+        ok("다음 걸음에 '송신 끝 소식 없음'으로 안 셈 (전엔 바로 셈)", A.tx_timeouts == to0 && A.tx_live);
+        push(&F, "+EVT:TX_DONE\r\n");
+        run_ack(60);
+    }
+
+    printf("셀이 낮아 쉬러 가면 마지막 보고만 보내고 밀린 기록은 안 보냄 (11/18 검수)\n");
+    {
+        run_for(3 * 60);                            /* 송신 끝 소식을 안 줌 → 링에 못 보낸 기록이 쌓임 */
+        uint32_t unsent;
+        ok("못 보낸 기록이 있음", ring_find_unsent(&RING, APP_RESEND_WINDOW, &unsent) == RING_OK);
+        B.batt = 3240;
+        bool seen = false;
+        uint32_t s0 = 0, r0 = 0, t0 = 0;
+        const uint32_t end = B.now + 3u * 60u + 240u;
+        while (B.now < end) {
+            const uint32_t ms = app_step(&A);
+            if (R.tx_pending) {
+                push(&F, "+EVT:TX_DONE\r\n");
+            }
+            B.now += ms / 1000u;
+            F.clock += ms;
+            if (A.batt_off && !seen) {
+                seen = true;
+                s0 = A.sent;
+                r0 = A.resends;
+                t0 = B.now;
+            }
+        }
+        ok("쉬러 감", seen && A.batt_off && B.now - t0 >= 200u);
+        ok("쉬는 동안 다시 보냄 0번 · 송신은 마지막 보고 하나", A.resends == r0 && A.sent - s0 <= 1u && !A.tx_live);
+        B.batt = 3700;
     }
 
     printf("\n%d / %d 통과\n", checks - fails, checks);

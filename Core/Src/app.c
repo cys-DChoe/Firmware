@@ -284,6 +284,8 @@ static void build_report(app_t *a, const meter_minute_t *mm, uint32_t now, repor
     if (!a->settings.zero_set) f |= REPORT_F_ZERO_UNSET;
     if (a->hw.time_valid == NULL || !a->hw.time_valid(a->hw.ctx)) f |= REPORT_F_TIME_UNSYNCED;
     if (mm->secs < 54.0) f |= REPORT_F_INCOMPLETE;
+    if (a->baro_held_min) f |= REPORT_F_BARO_HELD;
+    a->baro_held_min = false;
     const uint16_t mv = a->hw.batt_mv != NULL ? a->hw.batt_mv(a->hw.ctx) : 0u;
     if (mv != 0u) {
         a->batt_flags = report_battery_flags(mv, a->batt_flags);
@@ -312,10 +314,12 @@ static void do_minute(app_t *a, uint32_t now)
 
     flash_on(a, true);
     uint32_t seq;
+    bool stored = true;
     if (ring_append(a->ring, bytes, &seq) == RING_OK) {
         a->fresh_pending = true;
         a->fresh_seq = seq;
     } else {
+        stored = false;
         say(a, "링 저장 실패");
     }
     a->counter.total_nm3 = a->meter.total_nm3;
@@ -327,8 +331,10 @@ static void do_minute(app_t *a, uint32_t now)
     a->counter.events = a->meter.events.count;
     a->counter.unix_s = now;
     if (counter_save(a->nv_ctr, &a->counter) != NVLOG_OK) {
+        stored = false;
         say(a, "누적 저장 실패");
     }
+    a->store_failed = !stored;          /* LED 빨강 3번 */
     flash_on(a, false);
     a->reports++;
 }
@@ -384,9 +390,20 @@ static void time_sync(app_t *a, uint32_t now)
     }
     const int32_t diff = (int32_t)(t - now);
     if ((diff > APP_TIME_STEP_S || diff < -APP_TIME_STEP_S) && a->hw.set_time(a->hw.ctx, t)) {
-        /* 시계가 뛴 만큼 기준도 옮겨서 큰 간격을 적산하지 않게 */
-        a->last_s += (uint32_t)diff;
+        /* 시계가 뛴 만큼 기준도 옮겨서 큰 간격을 적산하지 않게.
+         * RTC 초로 잰 기다림(송신 · 가입 소식 · 다시 보냄 · 다시 가입 · LED · 쉬는 중 셀 재기)도 같이 옮김 —
+         * 안 옮기면 앞으로 뛸 땐 한꺼번에 끝나고(방금 시작한 송신이 '소식 없음'), 뒤로 뛸 땐 그만큼 멈춤 (11/18 검수) */
+        const uint32_t d = (uint32_t)diff;
+        a->last_s += d;
         a->last_minute = t / 60u;
+        a->tx_start_s += d;
+        a->join_start_s += d;
+        a->next_resend_s += d;
+        a->next_join_s += d;
+        a->next_lora_try_s += d;
+        a->next_led_s += d;
+        a->off_since += d;
+        a->next_batt_check_s += d;
         char m[48];
         snprintf(m, sizeof(m), "시계 맞춤: %ld 초", (long)diff);
         say(a, m);
@@ -464,6 +481,7 @@ static void lora_work(app_t *a, uint32_t now)
             a->lora_misses = 0;
             a->tx_failed = false;
             time_sync(a, now);
+            now = a->hw.now_s(a->hw.ctx);   /* 시계를 맞췄으면 아래 송신 시각이 낡지 않게 */
         } else {
             a->send_fail++;          /* 링에 "안 보냄"으로 남아 나중에 다시 보냄 */
             a->tx_failed = true;
@@ -478,6 +496,7 @@ static void lora_work(app_t *a, uint32_t now)
     }
     if (!a->timereq_on && !a->time_synced && a->hw.set_time != NULL) {
         time_sync(a, now);                  /* 가입 직후 첫 송신부터 시각을 물음 */
+        now = a->hw.now_s(a->hw.ctx);
     }
     if (a->tx_live || a->rak->tx_pending) {
         return;
@@ -487,6 +506,9 @@ static void lora_work(app_t *a, uint32_t now)
         send_seq(a, a->fresh_seq, false);
         a->next_resend_s = now + APP_RESEND_GAP_S;
         return;
+    }
+    if (a->batt_off) {
+        return;                             /* 쉬는 중엔 마지막 보고만 — 밀린 기록 · LTE 결과는 다시 켠 뒤 (11/18 검수) */
     }
     if (a->lte_report_pending) {
         uint8_t b[7];
@@ -587,7 +609,10 @@ static void led_tick(app_t *a, uint32_t now)
     }
     a->next_led_s = now + APP_LED_PERIOD_S;
     const bool lora_bad = !a->settings.keys_set || a->rak == NULL || !a->lora_ready || !a->rak->joined || a->tx_failed;
-    a->led_state = !a->read_ok ? APP_LED_SENSOR : (lora_bad ? APP_LED_LORA : APP_LED_OK);
+    a->led_state = a->store_failed                 ? APP_LED_STORE
+                   : (!a->read_ok || a->baro_held) ? APP_LED_SENSOR
+                   : lora_bad                      ? APP_LED_LORA
+                                                   : APP_LED_OK;
     if (a->hw.led != NULL) {
         if (a->led_state == APP_LED_OK) {
             a->hw.led(a->hw.ctx, false, 1u);
@@ -638,6 +663,10 @@ uint32_t app_step(app_t *a)
 
     a->prev_ok = got;
     a->read_ok = got;
+    a->baro_held = got && s.patm_held;
+    if (a->baro_held) {
+        a->baro_held_min = true;
+    }
 
     if (lp_minute_due(a->last_minute, now)) {
         a->last_minute = now / 60u;

@@ -20,6 +20,7 @@ sens_err_t sensors_power_on(sensors_t *s)
         s->power(true);
     }
     s->powered = true;
+    s->bmp_retry_n = 0;
     s->bus_pg->delay_ms(s->bus_pg->ctx, SENSORS_POWER_ON_MS);
     /* BMP390 은 전원이 꺼지면 설정이 지워지므로 켤 때마다 다시 설정 */
     const sens_err_t e = bmp390_init(s->bus_pg, &s->bmp);
@@ -62,6 +63,13 @@ void sensors_read(sensors_t *s, sensors_result_t *r)
     r->sample.pg_pa = a.p_pa;
     r->t_abp2_c = a.t_c;
 
+    if (!s->bmp_ready && s->powered && ++s->bmp_retry_n >= SENSORS_BMP_RETRY) {
+        s->bmp_retry_n = 0;
+        s->bmp_ready = bmp390_init(s->bus_pg, &s->bmp) == SENS_OK;   /* 켤 때 실패했으면 여기서 다시 */
+        if (s->bmp_ready) {
+            s->bmp_reinits++;
+        }
+    }
     bmp390_reading_t b = {0};
     r->e_baro = s->bmp_ready ? bmp390_measure(s->bus_pg, &s->bmp, &b) : SENS_E_BUS;
     if (r->e_baro == SENS_OK) {
@@ -69,8 +77,10 @@ void sensors_read(sensors_t *s, sensors_result_t *r)
         r->sample.t_gas_c = b.t_c;
         s->patm_fallback_pa = b.p_pa;
     } else {
-        /* 기압은 천천히 변해서 마지막 값으로 대신해도 오차가 작음. 온도는 정압 센서 것으로 대신. */
+        /* 기압은 천천히 변해서 마지막 값으로 대신해도 오차가 작음. 온도는 정압 센서 것으로 대신.
+         * 한 번도 못 쟀으면 해수면 값이라 높은 곳에선 틀림 → patm_held 로 보고에 표시 */
         r->sample.patm_pa = s->patm_fallback_pa;
+        r->sample.patm_held = true;
         r->sample.t_gas_c = (r->e_pg == SENS_OK) ? a.t_c : h.t_c;
     }
 

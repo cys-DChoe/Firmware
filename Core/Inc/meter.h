@@ -65,6 +65,7 @@ typedef struct {
     double pg_pa;       /* 정압(게이지압) */
     double t_gas_c;     /* 가스 온도 */
     double patm_pa;     /* 대기압 (BMP390) */
+    bool patm_held;     /* 기압을 못 재서 마지막 값(한 번도 못 쟀으면 해수면 값)을 씀 — 계산은 이 값으로 함 */
 } meter_sample_t;
 
 /* 1분 요약 — 저장 · 보고에 씀 */

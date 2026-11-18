@@ -100,6 +100,9 @@ bool nv_edata_nmi(void)
     if (__HAL_FLASH_GET_FLAG(FLASH_FLAG_ECCD) == 0u) {
         return false;
     }
+    if (READ_BIT(FLASH->ECCDETR, FLASH_ECCR_DATA_ECC) == 0u) {
+        return false;                   /* EDATA 가 아닌 곳(프로그램 · OTP 등)의 이중 오류 — 넘기지 않고 오류 재시작 (11/18 검수) */
+    }
     /* RM0481: ECCD 면 ICACHE 를 무효화. 안 쓴 칸이면 ECCDR = 0xFFFF, 아니면 쓰다 끊긴 칸 —
      * 둘 다 읽힌 값으로 CRC 가 틀려 nvlog 가 버리므로 여기선 지우고 돌아감 */
     HAL_ICACHE_Invalidate();

@@ -31,5 +31,5 @@ typedef enum {
 /* EDATA 가 켜져 있는지 보고 아니면 옵션 바이트로 켬(처음 한 번). 캐시 안 하기(MPU)는 main.c mpu_init() 가 먼저 해 둠. */
 nv_edata_state_t nv_edata_init(void);
 void nv_edata_ops(flash_ops_t *ops);
-/* NMI 에서 부름: 안 쓴 칸 · 깨진 칸 읽기로 난 ECC 이중 오류면 지우고 true */
+/* NMI 에서 부름: EDATA 의 안 쓴 칸 · 깨진 칸 읽기로 난 ECC 이중 오류면 지우고 true. 다른 곳 오류면 false */
 bool nv_edata_nmi(void);

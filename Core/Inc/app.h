@@ -68,12 +68,14 @@
  *   평균: LED 2.8 mA × 30 ms / 10 s ≈ 8 µA + 그동안 MCU 가 깨어 있는 몫 → 십수 µA [계산, 보드에서 잼]
  *   초록 1번 = 정상 (센서 읽힘 · LoRa 가입됨 · 마지막 송신 됨)
  *   빨강 1번 = 통신 문제 (키 없음 · 모듈 안 됨 · 가입 안 됨 · 마지막 송신 실패)
- *   빨강 2번 = 센서 문제 (차압 · 정압을 못 읽음) — 통신 문제보다 먼저 보임
+ *   빨강 2번 = 센서 문제 (차압 · 정압을 못 읽음 · 기압을 못 재 마지막 값으로 계산 중) — 통신 문제보다 먼저 보임
+ *   빨강 3번 = 저장 문제 (1분 기록 · 누적을 저장 못 함 — 그 기록은 못 보냄) — 가장 먼저 보임 (11/18)
  *   셀이 낮아 쉴 때는 안 깜빡임 */
 #define APP_LED_PERIOD_S     10u
 #define APP_LED_OK           0u
 #define APP_LED_LORA         1u
 #define APP_LED_SENSOR       2u
+#define APP_LED_STORE        3u
 
 typedef struct {
     bool (*read)(void *ctx, meter_sample_t *s);   /* 센서 읽기, 믿을 만하면 true */
@@ -111,6 +113,9 @@ typedef struct {
     bool batt_off;              /* 셀이 낮아 쉬는 중 */
     uint32_t off_since, next_batt_check_s;
     bool read_ok;               /* 마지막 센서 읽기가 쓸 만했나 */
+    bool baro_held;             /* 마지막 읽기에서 기압을 못 재 마지막 값으로 씀 */
+    bool baro_held_min;         /* 이번 분에 그런 때가 있었음 → 보고 비트 BARO_HELD */
+    bool store_failed;          /* 마지막 1분 기록 · 누적 저장이 실패함 (다음 성공까지) */
     bool tx_failed;             /* 마지막 송신이 실패함 (다음 성공까지) */
     uint32_t next_led_s;
     uint8_t led_state;          /* 마지막으로 보인 APP_LED_* */

@@ -29,7 +29,7 @@ static void is_true(const char *what, bool v)
 /* 예제 1 · 2 조건: Kisii 고도 1,700 m · 정압 300 Pa · 22 °C · dₜ 4.62 / D 25 mm · C 0.97 */
 static meter_sample_t ex_sample(double dp, double pg)
 {
-    meter_sample_t s = {dp, pg, 22.0, meter_patm_from_altitude(1700.0)};
+    meter_sample_t s = {dp, pg, 22.0, meter_patm_from_altitude(1700.0), false};
     return s;
 }
 

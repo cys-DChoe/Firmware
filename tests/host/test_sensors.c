@@ -310,6 +310,7 @@ static void test_sensors_read(void)
     near("정압 Pa", r.sample.pg_pa, 300.0, 0.001);
     near("대기압 Pa (BMP390)", r.sample.patm_pa, 103120.336648, 0.05);
     near("가스 온도 °C (BMP390)", r.sample.t_gas_c, 24.196611, 1e-5);
+    ok("기압을 쟀으니 '못 잼' 표시 없음", !r.sample.patm_held);
 
     printf("기압 센서가 죽으면 마지막 기압 · 정압 센서 온도로 대신\n");
     f.bmp_dead = true;
@@ -317,6 +318,7 @@ static void test_sensors_read(void)
     ok("기압 오류로 남고 계산은 계속", r.e_baro == SENS_E_BUS && r.usable);
     near("마지막 기압 사용", r.sample.patm_pa, 103120.336648, 0.05);
     near("온도는 ABP2 것", r.sample.t_gas_c, 25.0, 1e-5);
+    ok("'기압 못 잼' 표시", r.sample.patm_held);
 
     printf("범위를 살짝 벗어나면 버리지 않고 끝값으로\n");
     f.bmp_dead = false;
@@ -336,6 +338,25 @@ static void test_sensors_read(void)
     f.hsc_dead = true;
     sensors_read(&s, &r);
     ok("usable = false", r.e_dp == SENS_E_BUS && !r.usable);
+
+    printf("켤 때 기압 센서가 답이 없었으면 나중에 다시 설정해 봄 (11/18 검수)\n");
+    f.hsc_dead = false;
+    f.bmp_dead = true;
+    sensors_t s2;
+    sensors_init(&s2, &dp, &pg, fake_power);
+    ok("켤 때 BMP390 응답 없음", sensors_power_on(&s2) == SENS_E_BUS && !s2.bmp_ready);
+    sensors_read(&s2, &r);
+    ok("해수면 값으로 계산하되 '못 잼' 표시", r.e_baro == SENS_E_BUS && r.usable && r.sample.patm_held &&
+                                                r.sample.patm_pa == 101325.0);
+    f.bmp_dead = false;
+    int n = 1;
+    while (n < 20 && r.e_baro != SENS_OK) {
+        sensors_read(&s2, &r);
+        n++;
+    }
+    ok("살아나면 6번째 읽기에 다시 설정 · 실제 기압", r.e_baro == SENS_OK && n == (int)SENSORS_BMP_RETRY &&
+                                                         !r.sample.patm_held && s2.bmp_reinits == 1u);
+    near("다시 설정 뒤 기압 = Bosch 값", r.sample.patm_pa, 103120.336648, 0.05);
 
     sensors_power_off(&s);
     ok("전원 끔", !power_state && !s.powered);
