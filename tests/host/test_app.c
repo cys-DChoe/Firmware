@@ -789,6 +789,39 @@ int main(void)
         ok("되돌리기 (3600 → 0)", app_batt_cal(&A, 3600) && A.settings.batt_cal_mv == 0);
     }
 
+    printf("방출 기준(물트랩 압력)을 설정 명령으로 넣기\n");
+    {
+        B.batt = 3700;
+        B.s.dp_raw_pa = 0.0;
+        B.s.pg_pa = 960.0;                          /* 트랩이 물 10 cm 쯤인 소화조: 정압이 여기서 멈춤 */
+        ok("처음엔 기본값 물 20 cm (1962 Pa)", app_vent_p_pa(&A) == 98.1 * 20.0 && A.meter.cfg.vent_p_pa == 98.1 * 20.0);
+        const uint32_t v0 = A.meter.vent_minutes;
+        run_ack(15 * 60);
+        ok("기본값으로는 960 Pa 에서 방출을 못 잡음", A.meter.vent_minutes == v0);
+
+        const uint8_t low[3] = {APP_CFG_VENT_P, 0x00, 0x32};       /* 50 Pa */
+        const uint8_t high[3] = {APP_CFG_VENT_P, 0x1B, 0x58};      /* 7000 Pa > 센서 만점 6000 */
+        const uint8_t bad_len[2] = {APP_CFG_VENT_P, 0x03};
+        ok("범위 밖(50 · 7000 Pa) · 길이 틀림은 무시", !app_downlink(&A, APP_CFG_PORT, low, 3) &&
+                                                       !app_downlink(&A, APP_CFG_PORT, high, 3) &&
+                                                       !app_downlink(&A, APP_CFG_PORT, bad_len, 2) &&
+                                                       A.meter.cfg.vent_p_pa == 98.1 * 20.0);
+        const uint8_t set[3] = {APP_CFG_VENT_P, 0x03, 0xD5};       /* 981 Pa = 물 10 cm */
+        ok("03 03 D5 → 981 Pa 로 바로 적용", app_downlink(&A, APP_CFG_PORT, set, 3) && A.meter.cfg.vent_p_pa == 981.0 &&
+                                               A.settings.vent_p_pa == 981.0);
+        const uint32_t saves = NS.next_seq;
+        ok("같은 값을 또 받으면 다시 저장하지 않음", app_downlink(&A, APP_CFG_PORT, set, 3) && NS.next_seq == saves);
+        const uint32_t v1 = A.meter.vent_minutes;
+        run_ack(15 * 60);
+        ok("이제 960 Pa 에서 평평하면 방출로 셈 · 보고에 방출 비트", A.meter.vent_minutes > v1 && last_report(&r) &&
+                                                                    (r.flags & REPORT_F_VENTING));
+        boot();
+        ok("다시 켜도 981 Pa 유지", A.meter.cfg.vent_p_pa == 981.0 && app_vent_p_pa(&A) == 981.0);
+        const uint8_t back[3] = {APP_CFG_VENT_P, 0x00, 0x00};
+        ok("0 을 보내면 기본값으로", app_downlink(&A, APP_CFG_PORT, back, 3) && A.meter.cfg.vent_p_pa == 98.1 * 20.0);
+        idle_gas();
+    }
+
     printf("\n%d / %d 통과\n", checks - fails, checks);
     return fails ? 1 : 0;
 }

@@ -89,6 +89,16 @@ void app_init(app_t *a, const app_hw_t *hw, ring_t *ring, nvlog_t *nv_set, nvlog
     a->boot_flags = REPORT_F_BOOT;
 }
 
+double app_vent_p_pa(const app_t *a)
+{
+    if (a->settings.vent_p_pa > 0.0) {
+        return a->settings.vent_p_pa;
+    }
+    meter_cfg_t d;
+    meter_default_cfg(&d);
+    return d.vent_p_pa;
+}
+
 uint16_t app_pg_fs_pa(const app_t *a)
 {
     return a->settings.pg_fs_pa != 0u ? a->settings.pg_fs_pa : (uint16_t)APP_PG_FS_DEFAULT_PA;
@@ -118,6 +128,24 @@ bool app_downlink(app_t *a, uint8_t port, const uint8_t *d, uint8_t len)
             a->hw.set_pg_fs(a->hw.ctx, (double)app_pg_fs_pa(a));
         }
         say(a, ok ? "설정: 정압 만점 바꿈" : "설정: 정압 만점 바꿈 (저장 실패 — 다시 켜면 옛 값)");
+        return true;
+    }
+    if (d[0] == APP_CFG_VENT_P && len == 3u) {
+        const uint16_t pa = (uint16_t)((d[1] << 8) | d[2]);
+        if (pa != 0u && (pa < APP_VENT_P_MIN_PA || pa > app_pg_fs_pa(a))) {
+            say(a, "설정: 방출 기준 범위 밖 — 무시");
+            return false;
+        }
+        if ((double)pa == a->settings.vent_p_pa) {
+            say(a, "설정: 방출 기준 같은 값 — 그대로");
+            return true;
+        }
+        a->settings.vent_p_pa = (double)pa;
+        flash_on(a, true);
+        const bool ok = settings_save(a->nv_set, &a->settings) == NVLOG_OK;
+        flash_on(a, false);
+        a->meter.cfg.vent_p_pa = app_vent_p_pa(a);
+        say(a, ok ? "설정: 방출 기준 바꿈" : "설정: 방출 기준 바꿈 (저장 실패 — 다시 켜면 옛 값)");
         return true;
     }
     if (d[0] == APP_CFG_LTE_TEST && len == 1u) {

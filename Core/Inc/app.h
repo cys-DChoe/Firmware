@@ -33,6 +33,11 @@
 #define APP_CFG_PORT         10u
 #define APP_CFG_PG_FS        0x01u
 #define APP_CFG_LTE_TEST     0x02u   /* 02 : LTE 켜기 · 망 확인 · 끄기 한 번 (1차 시험) */
+/*   03 hh ll : 방출 기준(물트랩 압력) Pa (big-endian, 100 – 지금 정압 센서 만점). 소화조마다 달라 설치 때 넣음
+ *   (물 높이 cm × 98.1 — 10 cm = 981, 20 cm = 1962). 0 이면 기본값(물 20 cm)으로. 받으면 바로 적용 · 저장.
+ *   이 값 근처에서 정압이 10분 평평하고 유량이 0 인 분을 '방출'로 셈 (11/18) */
+#define APP_CFG_VENT_P       0x03u
+#define APP_VENT_P_MIN_PA    100u
 /* LTE 1차 (설계서 5번): 켜고 · 망 등록 확인 · 끄기만. 셀 3.6 V 미만이면 안 함(펌웨어 주의 1절, 0.05 V 여유 → 3.65 V).
  * 결과는 LoRa 포트 2 로 7 바이트 (lte_result_encode) — 1분 보고 링에는 안 넣음 */
 #define APP_LTE_PORT         2u
@@ -164,6 +169,8 @@ bool app_zero(app_t *a);
 void app_set_boot(app_t *a, bool abnormal);
 /* 내려받은 설정 명령 처리 (포트 · 내용). 알아들었으면 true */
 bool app_downlink(app_t *a, uint8_t port, const uint8_t *data, uint8_t len);
+/* 지금 쓰는 방출 기준 Pa (설정 0 이면 기본값 = 물 20 cm) */
+double app_vent_p_pa(const app_t *a);
 /* 지금 쓰는 정압 센서 만점 Pa (설정 0 이면 기본값) */
 uint16_t app_pg_fs_pa(const app_t *a);
 /* LTE 모듈 연결 · 시험 받기 (셀 3.65 V 이상일 때만, 하는 중이면 false). 실제 시작은 다음 app_step 에서 */

@@ -255,8 +255,8 @@ int main(void)
 #ifdef SECRETS_HAVE_LORA_KEYS
     app_set_keys(&s_app, SECRET_DEV_EUI, SECRET_APP_EUI, SECRET_APP_KEY);
 #endif
-    printf("누적 %.4f Nm3 · 영점 %s · 셀 보정 %+d mV\n", s_app.meter.total_nm3, s_app.settings.zero_set ? "있음" : "없음",
-           (int)s_app.settings.batt_cal_mv);
+    printf("누적 %.4f Nm3 · 영점 %s · 셀 보정 %+d mV · 방출 기준 %.0f Pa\n", s_app.meter.total_nm3,
+           s_app.settings.zero_set ? "있음" : "없음", (int)s_app.settings.batt_cal_mv, app_vent_p_pa(&s_app));
 #if defined(BATT_CAL_ACTUAL_MV) && (BATT_CAL_ACTUAL_MV > 0)
     /* 셀 보정 (보드 오면 4단계): -DBATT_CAL_ACTUAL_MV=멀티미터 값(mV) 로 빌드해 한 번 켜면 저장됨. 끝나면 0 으로 다시 빌드 */
     (void)app_batt_cal(&s_app, (uint16_t)BATT_CAL_ACTUAL_MV);
