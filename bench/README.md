@@ -33,6 +33,8 @@
 > - 수집기 `~/Library/LaunchAgents/com.samton.bench.collector.plist` → **실행본은 `~/bench/server`**, 기록도 `~/bench/server/logs/`. launchd 로 띄운 프로그램은 macOS 보안 때문에 `~/Documents` 를 못 읽어서 저장소에서 돌리지 못함.
 > - 저장소의 `server/` 를 고친 뒤엔 `sh server/deploy_mac.sh` 한 번 → 복사하고 수집기를 다시 켬.
 > - 상태 `launchctl print gui/$(id -u)/com.samton.bench.collector`, 멈춤 `launchctl bootout gui/$(id -u)/com.samton.bench.collector`, 다시 등록 `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.samton.bench.collector.plist` (브로커도 같은 식).
+>
+> 실시간 페이지(아티팩트 https://claude.ai/artifact/YN7VeeQhmvBifBkXv9NecE): 페이지는 이 맥의 로컬 MCP 서버 `nucleo-h563zi-breadboard`(`claude-page/breadboard_server.py`)에서 값을 받음. 11/23 Claude Code 사용자 범위로 등록 — 파이썬 `~/bench/mcp/.venv`(mcp 1.x, `claude-page/requirements.txt`), 환경변수 BENCH_PORT=/dev/cu.usbmodem21503 · BENCH_LOG_DIR=~/bench/server/logs · BENCH_MQTT_CRED=~/bench/server/credentials.txt · BENCH_VENTURI_DIR=~/bench/server. 확인 `claude mcp get nucleo-h563zi-breadboard`. mcp 2.x 는 FastMCP 이름이 바뀌어 안 뜸.
 
 ---
 
