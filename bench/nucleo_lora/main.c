@@ -142,8 +142,15 @@ static bool join_once(void)
     return e == WIO_OK;
 }
 
+/* 스택: 링커 스크립트(board/…ld)의 _Min_Stack_Size 가 1 KB 이고 시작 코드가 그걸 MSPLIM(스택 한계)으로 걸어 둠.
+ * 소수 printf 한 줄이 1 KB 를 넘겨 HardFault(CFSR STKOF)가 났음(11/23) → 벤치는 한계를 16 KB 로 내림.
+ * RAM 640 KB 중 쓰는 건 수 KB 라 힙과 닿지 않음. */
+#define BENCH_STACK_BYTES  0x4000u
+extern uint8_t _estack;
+
 int main(void)
 {
+    __set_MSPLIM((uint32_t)&_estack - BENCH_STACK_BYTES);
     HAL_Init();
     if (log_init() != HAL_OK) {
         Error_Handler();
