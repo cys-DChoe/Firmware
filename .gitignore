@@ -38,3 +38,12 @@ secrets.h
 *.ppk2
 *.sr
 *.log
+lora_test_keys.txt
+
+# 브레드보드 벤치 (bench/) — 비밀값 · 기록 · 빌드
+bench/firmware/secrets.conf
+bench/server/credentials.txt
+bench/server/logs/
+bench/server/.venv/
+bench/firmware/build*/
+__pycache__/

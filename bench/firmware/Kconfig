@@ -1,0 +1,190 @@
+mainmenu "브레드보드 센서 확인"
+
+config BENCH_SAMPLE_PERIOD_MS
+	int "센서 측정 주기 (ms)"
+	default 1000
+	range 100 60000
+	help
+	  HSC 와 ABP2 를 한 번씩 읽는 간격. 읽기 시작부터 다음 읽기 시작까지의 시간이라,
+	  읽는 데 걸린 시간(센서 3개 · HSC 16번 평균 기준 약 52 ms)을 빼고 남은 만큼만 잠.
+	  제품 펌웨어는 흐름이 있을 때 1 s, 없을 때 10 s 로 잼(설계서 결정 ①).
+	  브레드보드 확인에는 1000 이 기본. 값은 prj.conf 에서 바꿈.
+
+config BENCH_ABP2_MAX_PA
+	int "ABP2 정압 만점 (Pa)"
+	default 6000
+	range 1000 100000
+	help
+	  ABP2 출력 90 % 가 이 압력임 (10 % = 0 Pa). 붙어 있는 센서 부품 번호의
+	  범위와 같아야 값이 맞음: 2.5KG 면 2500, 006KG 면 6000.
+	  제품 드라이버 기본값(6000)을 bench 에서만 이 값으로 덮어씀.
+
+config BENCH_HSC_ZERO
+	bool "HSC 차압 영점 보정"
+	default y
+	help
+	  켜질 때 HSC 를 여러 번 읽은 평균을 영점으로 잡고, 이후 찍는 차압에서 뺌.
+	  차압 포트 둘 다 열려 있어야(실제 차압 0) 맞는 영점이 잡힘.
+	  보드의 파란 USER 버튼(B1)을 누르면 그 자리에서 다시 잡음.
+	  정압(ABP2)은 영점 오차가 쓰임새에 비해 작아 제품처럼 보정 안 함.
+
+config BENCH_HSC_ZERO_SAMPLES
+	int "영점 잡을 때 읽는 횟수"
+	default 32
+	range 4 256
+	depends on BENCH_HSC_ZERO
+	help
+	  20 ms 간격으로 이만큼 읽어 평균함 (32 번이면 약 0.7 초).
+
+config BENCH_HSC_GAIN_PPM
+	int "HSC 보정 기울기 (백만분율, 1000000 = 1.0)"
+	default 1000000
+	range 500000 1500000
+	help
+	  찍는 HSC 차압 = 기울기 × (읽은 값 − 켜질 때 잡은 영점) + 오프셋.
+	  SDP810 을 기준으로 맞춘 값을 넣음 (migration/server/hsc_fit.py 가 계산해 줌).
+	  영점은 켜질 때 · USER 버튼 때 그대로 잡히고, 이 보정은 그 뒤에 곱해짐.
+
+config BENCH_HSC_OFFSET_MPA
+	int "HSC 보정 오프셋 (mPa, 1000 = 1 Pa)"
+	default 0
+	range -50000 50000
+	help
+	  위 식의 오프셋. 영점을 잡은 상태(포트 둘 다 열림)에서 찍히는 값이 이것임.
+
+config BENCH_HSC_OVERSAMPLE
+	int "HSC 를 한 번 측정에 읽는 횟수 (평균)"
+	default 16
+	range 1 64
+	help
+	  HSC 는 눈금 한 칸이 약 0.15 Pa 라 한 번만 읽으면 ±0.3 Pa 씩 튐.
+	  측정 한 번에 이만큼 읽어 평균을 찍음 (16 번이면 흔들림이 약 1/4).
+	  횟수 × 간격이 측정 주기보다 짧아야 함 (16 × 2 ms = 약 40 ms < 100 ms).
+
+config BENCH_HSC_OVERSAMPLE_GAP_MS
+	int "HSC 여러 번 읽을 때 간격 (ms)"
+	default 2
+	range 1 20
+
+config BENCH_HSC_SMOOTH_TAU_MS
+	int "HSC 값을 부드럽게 하는 시간 (ms, 0 = 끔)"
+	default 1000
+	range 0 60000
+	help
+	  찍는 HSC 값을 이 시간만큼의 이동 평균으로 부드럽게 함. 1000 이면 잔 흔들림이
+	  약 1/4 로 줄고, 작은 변화는 1초쯤 늦게 따라옴. 큰 변화는 아래 값으로 바로 따라감.
+
+config BENCH_HSC_SMOOTH_JUMP_MPA
+	int "이보다 크게 바뀌면 바로 따라감 (mPa)"
+	default 600
+	range 100 100000
+	help
+	  새 값이 지금 평균과 이만큼 넘게 다르면 잡음이 아니라 진짜 압력 변화로 보고
+	  평균을 버리고 바로 그 값으로 감. 600 = 0.6 Pa (잔 흔들림의 약 5배).
+
+config BENCH_HSC_TRACK_SDP
+	bool "흐름 없을 때 HSC 0점을 SDP810 에 맞추기"
+	default y
+	depends on BENCH_SDP810
+	help
+	  SDP810 값이 ±1 Pa 안쪽(흐름 없음)이고 HSC 와 차이가 5 Pa 안쪽일 때만,
+	  HSC 0점을 SDP810 값 쪽으로 천천히 끌어감. 압력이 걸린 동안에는 멈춤.
+	  HSC 0점이 켜진 뒤에도 조금씩 흘러서 SDP810 과 어긋나는 것을 잡아 줌.
+
+config BENCH_HSC_TRACK_TAU_S
+	int "HSC 0점이 SDP810 을 따라가는 빠르기 (초)"
+	default 20
+	range 2 600
+	depends on BENCH_HSC_TRACK_SDP
+
+config BENCH_HSC_FAST_MS
+	int "HSC 만 더 자주 읽는 간격 (ms, 0 = 끔)"
+	default 100
+	range 0 1000
+	help
+	  측정 줄 사이에 HSC 를 이 간격으로 더 읽음 (100 ms, 1초 주기면 10개).
+	  측정 줄의 HSC 값은 그 10개의 평균이고, 10개 값 하나하나는 측정 줄 바로 뒤
+	  "[hsc 100 ms] #번호  v1 v2 ... v10" 줄로 같이 보냄 (못 읽은 칸은 x).
+	  수집기는 이 줄을 시간별 _hsc.csv 에 1초마다 10줄로 한꺼번에 씀.
+	  한 줄에 최대 20개라, 측정 주기가 길면 앞 20개만 보냄.
+	  0 이면 예전처럼 측정 때 한 번만 읽고 이 줄도 안 보냄.
+
+config BENCH_SDP810
+	bool "SDP810 차압 센서도 읽기 (I2C1, 0x25)"
+	default y
+	help
+	  HSC 와 같은 I2C1 버스에 붙은 SDP810-500Pa 를 HSC · ABP2 다음에 읽어
+	  측정 줄 끝에 "  |  SDP810 ..." 으로 붙임. 안 붙어 있으면 "응답 없음" 으로
+	  찍고 5초마다 다시 찾음. HSC 읽기에는 영향 없음.
+
+config BENCH_BME280
+	bool "BME280 대기압 센서도 읽기 (I2C4, 0x76)"
+	default y
+	help
+	  정압 센서(ABP2)와 같은 I2C4 버스에 붙은 BME280 을 읽어 측정 줄 끝에
+	  "  |  BME280 정상 102039.6 Pa 23.92 C 21.5 %" (대기압 · 주변 온도 · 습도)로 붙임.
+	  ABP2 는 대기압 기준 압력이라, 밀도 계산의 절대압 = 이 대기압 + ABP2 정압.
+	  안 붙어 있으면 "응답 없음" 으로 찍고 5초마다 다시 찾음. BMP280(습도 없음)도 됨.
+
+config BENCH_DS18B20
+	bool "DS18B20 가스 온도 센서도 읽기 (1-Wire, D2 = PG14)"
+	default y
+	help
+	  관 속에 넣는 DS18B20 을 읽어 측정 줄 끝에 "  |  DS18B20 정상 24.31 C" 로 붙임.
+	  데이터 선은 아두이노 D2 (PG14), 풀업 4.7 kΩ 는 어댑터 보드에 있음. 센서는 하나만.
+	  안 붙어 있으면 "응답 없음" 으로 찍고 5초마다 다시 찾음.
+
+config BENCH_SLOW_PERIOD_MS
+	int "BME280 · DS18B20 을 읽는 간격 (ms)"
+	default 1000
+	range 800 60000
+	help
+	  둘 다 천천히 바뀌는 값이고 읽는 데 7 ~ 9 ms 씩 걸려서 측정 줄마다 읽지 않음.
+	  이 간격으로 읽고, 그 사이 측정 줄에는 마지막 값을 다시 붙임.
+	  DS18B20 변환이 최대 750 ms 라 800 보다 짧게는 못 함.
+
+config BENCH_MQTT
+	bool "이더넷 MQTT 로 측정 줄 보내기"
+	default y
+	help
+	  랜선(보드 RJ45)으로 DHCP 주소를 받고, 시리얼에 찍는 줄과 같은 글을
+	  MQTT 브로커로 보냄. 시리얼 출력은 그대로 나옴. 네트워크 설정은 prj.conf.
+
+if BENCH_MQTT
+
+config BENCH_MQTT_BROKER
+	string "MQTT 브로커 IPv4 주소"
+	default "172.30.1.1"
+	help
+	  PC 의 Mosquitto. PC 주소가 바뀌면 여기를 바꿔 다시 빌드.
+
+config BENCH_MQTT_PORT
+	int "MQTT 브로커 포트"
+	default 1883
+
+config BENCH_MQTT_USER
+	string "MQTT 사용자"
+	default "h563"
+
+config BENCH_MQTT_PASSWORD
+	string "MQTT 비밀번호 (secrets.conf 에서 넣음)"
+	default ""
+
+config BENCH_MQTT_CLIENT_ID
+	string "MQTT 클라이언트 ID"
+	default "h563-bench"
+
+config BENCH_MQTT_TOPIC
+	string "토픽 앞부분 (뒤에 /line, /status 가 붙음)"
+	default "h563/bench"
+
+config BENCH_MQTT_QUEUE
+	int "끊긴 동안 쌓아 둘 줄 수"
+	default 300
+	range 10 1000
+	help
+	  한 줄 320 바이트. 300 줄이면 1초 주기에 5분, 0.1초 주기에 30초.
+
+endif
+
+source "Kconfig.zephyr"

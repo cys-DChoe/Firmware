@@ -1,0 +1,20 @@
+/* 브레드보드 배선
+ *   HSC  → I2C1: PB8 SCL (CN7-2),   PB9 SDA (CN7-4)   — 보드 기본 설정 그대로
+ *   ABP2 → I2C4: PD12 SCL (CN10-21), PD13 SDA (CN10-19)
+ *
+ * 처음엔 ABP2 를 I2C2 PF1/PF0 (CN9-19/21) 에 물렸지만, NUCLEO-H563ZI 는 PF0/PF1 이
+ * 클럭(HSE/MCO) 납땜 브리지에 묶여 있어 브리지를 바꾸지 않으면 CN9 쪽에서 쓸 수 없음
+ * (UM3115 클럭 소스 절). 그래서 브리지 변경 없이 쓰는 I2C4 로 옮김.
+ * 풀업 10 kΩ 는 브레드보드에 달려 있음.
+ */
+/* ABP2 는 바깥 풀업 저항 없이 MCU 안쪽 풀업(약 40 kΩ, 핀 설정의 bias-pull-up)만 씀.
+ * 안쪽 풀업은 약해서 선이 천천히 올라오므로 속도를 약 14 kHz 로 낮춤.
+ * TIMINGR 0xF021FFFF: I2C4 클럭 120 MHz(PCLK3) 기준 PRESC 15 → 133 ns 단위,
+ * SCLL = SCLH = 256 단위 = 34 µs, SCLDEL 3 단위, SDADEL 1 단위. */
+&i2c4 {
+	pinctrl-0 = <&i2c4_scl_pd12 &i2c4_sda_pd13>;
+	pinctrl-names = "default";
+	clock-frequency = <I2C_BITRATE_STANDARD>;
+	timings = <120000000 I2C_BITRATE_STANDARD 0xF021FFFF>;
+	status = "okay";
+};

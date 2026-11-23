@@ -1,0 +1,2 @@
+paho-mqtt>=2,<3
+pyserial>=3.5  # 시리얼 대체 입력(BENCH_SERIAL_PORT)을 쓸 때만 필요
