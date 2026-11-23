@@ -71,6 +71,20 @@ void HAL_I2C_MspInit(I2C_HandleTypeDef *hi2c)
         HAL_GPIO_Init(I2C3_SCL_PORT, &gpio);
         gpio.Pin = I2C3_SDA_PIN;
         HAL_GPIO_Init(I2C3_SDA_PORT, &gpio);
+    } else if (hi2c->Instance == I2C1) {
+        /* Nucleo 벤치만: HSC — PB8 SCL · PB9 SDA (Arduino D15 · D14), 브레드보드 풀업 */
+        __HAL_RCC_I2C1_CLK_ENABLE();
+        __HAL_RCC_GPIOB_CLK_ENABLE();
+        gpio.Alternate = GPIO_AF4_I2C1;
+        gpio.Pin = GPIO_PIN_8 | GPIO_PIN_9;
+        HAL_GPIO_Init(GPIOB, &gpio);
+    } else if (hi2c->Instance == I2C4) {
+        /* Nucleo 벤치만: ABP2 · BME280 — PD12 SCL · PD13 SDA, 브레드보드 풀업 */
+        __HAL_RCC_I2C4_CLK_ENABLE();
+        __HAL_RCC_GPIOD_CLK_ENABLE();
+        gpio.Alternate = GPIO_AF4_I2C4;
+        gpio.Pin = GPIO_PIN_12 | GPIO_PIN_13;
+        HAL_GPIO_Init(GPIOD, &gpio);
     }
 }
 
@@ -83,6 +97,12 @@ void HAL_I2C_MspDeInit(I2C_HandleTypeDef *hi2c)
         __HAL_RCC_I2C3_CLK_DISABLE();
         HAL_GPIO_DeInit(I2C3_SCL_PORT, I2C3_SCL_PIN);
         HAL_GPIO_DeInit(I2C3_SDA_PORT, I2C3_SDA_PIN);
+    } else if (hi2c->Instance == I2C1) {
+        __HAL_RCC_I2C1_CLK_DISABLE();
+        HAL_GPIO_DeInit(GPIOB, GPIO_PIN_8 | GPIO_PIN_9);
+    } else if (hi2c->Instance == I2C4) {
+        __HAL_RCC_I2C4_CLK_DISABLE();
+        HAL_GPIO_DeInit(GPIOD, GPIO_PIN_12 | GPIO_PIN_13);
     }
 }
 

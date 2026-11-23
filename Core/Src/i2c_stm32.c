@@ -59,8 +59,8 @@ static void bus_delay(void *ctx, uint32_t ms)
 
 HAL_StatusTypeDef i2c_stm32_init(i2c_stm32_t *p, I2C_TypeDef *inst)
 {
-    /* I2C2 커널 클럭 = PCLK1, I2C3 = PCLK3 (리셋 기본값) */
-    const uint32_t kernel = (inst == I2C3) ? HAL_RCC_GetPCLK3Freq() : HAL_RCC_GetPCLK1Freq();
+    /* I2C1 · I2C2 커널 클럭 = PCLK1, I2C3 · I2C4 = PCLK3 (리셋 기본값). I2C1 · I2C4 는 Nucleo 벤치(bench/nucleo_lora)만 씀 */
+    const uint32_t kernel = (inst == I2C3 || inst == I2C4) ? HAL_RCC_GetPCLK3Freq() : HAL_RCC_GetPCLK1Freq();
 
     p->h.Instance = inst;
     p->h.Init.Timing = i2c_timing_100k(kernel);

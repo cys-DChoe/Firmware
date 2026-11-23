@@ -116,3 +116,49 @@ add_custom_command(TARGET ${PROJECT_NAME}.elf POST_BUILD
   COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${PROJECT_NAME}.elf> ${PROJECT_NAME}.bin
   COMMAND ${CMAKE_SIZE} $<TARGET_FILE:${PROJECT_NAME}.elf>
 )
+
+# ---------- Nucleo-H563ZI 브레드보드 LoRa 벤치 (bench/nucleo_lora/main.c) ----------
+# 보드 펌웨어와 따로 만듦: cmake --build build.nosync --target bench_lora.elf
+# 넣기: ./tools/flash.sh build.nosync/bench_lora.elf   (Nucleo 원래 Zephyr 벤치는 build.nosync/backup/ 에 백업)
+set(BENCH ${CMAKE_CURRENT_SOURCE_DIR}/bench/nucleo_lora)
+add_executable(bench_lora.elf EXCLUDE_FROM_ALL
+  ${BENCH}/main.c
+  ${BENCH}/wioe5.c
+  ${BENCH}/bme280.c
+  ${BENCH}/sdp810.c
+  ${BENCH}/ds18b20.c
+  ${BENCH}/it.c
+  Core/Src/hsc.c
+  Core/Src/abp2.c
+  Core/Src/report.c
+  Core/Src/i2c_stm32.c
+  Core/Src/i2c_timing.c
+  Core/Src/lora_uart_stm32.c
+  Core/Src/log.c
+  Core/Src/syscalls.c
+  Core/Src/stm32h5xx_hal_msp.c
+  ${DEV}/Source/Templates/system_stm32h5xx.c
+  ${DEV}/Source/Templates/gcc/startup_stm32h563xx.s
+  ${HAL_SOURCES}
+)
+target_compile_definitions(bench_lora.elf PRIVATE STM32H563xx USE_HAL_DRIVER)
+target_include_directories(bench_lora.elf PRIVATE
+  ${BENCH}
+  Core/Inc
+  ${DEV}/Include
+  ${HAL}/Inc
+  ${TP}/cmsis_core/Include
+)
+target_compile_options(bench_lora.elf PRIVATE
+  $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Wno-unused-parameter>
+  $<$<CONFIG:Debug>:-Og -g3>
+  $<$<CONFIG:Release>:-Os -g>
+)
+target_link_libraries(bench_lora.elf PRIVATE m)
+target_link_options(bench_lora.elf PRIVATE
+  -T${LDSCRIPT}
+  -Wl,-Map=bench_lora.map,--cref
+  -Wl,--print-memory-usage
+  -u _printf_float
+)
+set_target_properties(bench_lora.elf PROPERTIES LINK_DEPENDS ${LDSCRIPT})
