@@ -57,7 +57,9 @@ sens_err_t sdp810_fetch(const i2c_bus_t *bus, sdp810_t *d, sdp810_reading_t *out
     }
     uint8_t b[9];
     if (bus->read(bus->ctx, SDP810_ADDR, b, sizeof(b)) != 0) {
-        d->started = false;             /* 아직 측정 중이거나 빠짐 — 잠 명령도 못 받음 */
+        /* started 는 그대로 둠 → 뒤이은 sdp810_sleep 이 잠 명령을 한 번 보냄.
+         * 읽기만 한 번 실패하고 센서는 살아 있으면, 안 재우면 다시 찾을 때까지(최대 10분) 쉼 상태 1.1 mA 로 남음 (11/24 점7).
+         * 정말 빠졌으면 잠 명령도 답이 없을 뿐(실패 이어짐 2번 — 버스 다시 열기 문턱 3 안) */
         lost(d);
         return SENS_E_BUS;
     }

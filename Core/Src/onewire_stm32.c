@@ -94,7 +94,7 @@ void onewire_stm32_init(onewire_t *ow)
     GPIO_InitTypeDef g = {0};
     g.Pin = TEMP_DQ_PIN;
     g.Mode = GPIO_MODE_OUTPUT_OD;
-    g.Pull = GPIO_PULLUP;            /* 어댑터가 없는 판(빈 핀)에서 선이 뜨지 않게 — 어댑터 4.7 kΩ 과 같이 있어도 무해 */
+    g.Pull = GPIO_PULLUP;            /* 센서 자리가 없는 판(PCB3_2, 빈 핀)에서 선이 뜨지 않게 — PCB3_3 은 R_TMP_PU 4.7 kΩ 가 있어 같이 있어도 무해 */
     g.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(TEMP_DQ_PORT, &g);
 

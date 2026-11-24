@@ -14,10 +14,11 @@
 #include "onewire.h"
 #include "sdp810.h"
 
-/* DS18B20: 이 간격마다 변환 시작(750 ms · 1.5 mA → 평균 약 0.1 mA), 결과는 750 ms 넘게 지난 다음 읽기에서 */
-#define SENSORS_PROBE_PERIOD_MS  10000u
-/* 마지막 정상값이 이보다 오래되면 가스 온도를 BMP390 으로 되돌림 */
-#define SENSORS_PROBE_MAX_AGE_MS 60000u
+/* DS18B20: 이 간격마다 변환 시작(750 ms · 1.5 mA → 평균 약 0.02 mA), 결과는 750 ms 넘게 지난 다음 읽기에서.
+ * 11/24 검수 점4: 10 s(평균 0.11 mA) → 60 s. 가스 온도는 1분 보고 단위라 1분에 한 번이면 충분 */
+#define SENSORS_PROBE_PERIOD_MS  60000u
+/* 마지막 정상값이 이보다 오래되면 가스 온도를 BMP390 으로 되돌림 (변환 간격의 2.5배 — 한 번 빠져도 버팀) */
+#define SENSORS_PROBE_MAX_AGE_MS 150000u
 
 /* 전원을 켠 뒤 기다리는 시간: 센서 시작 시간(HSC 3 · ABP2 2.5 · BMP390 2 ms)에
  * 센서 전원(U9 승압) 안정 여유를 더함 — 보드에서 재고 줄일 수 있음 */

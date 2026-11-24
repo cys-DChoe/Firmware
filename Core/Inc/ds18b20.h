@@ -5,7 +5,7 @@
  *   Skip ROM 0xCC(센서 하나) · Convert T 0x44 · Read Scratchpad 0xBE(9바이트, 마지막이 CRC-8)
  *   온도 °C = 부호 있는 16비트 ÷ 16 (12비트 0.0625 °C), 켠 뒤 처음 값 85.0 °C 는 아직 안 잰 값
  *
- * 쓰는 순서 (sensors.c): 10 초마다 ds18b20_convert → 750 ms 넘게 지난 다음 읽기에서 ds18b20_read
+ * 쓰는 순서 (sensors.c): 60 초마다(SENSORS_PROBE_PERIOD_MS) ds18b20_convert → 750 ms 넘게 지난 다음 읽기에서 ds18b20_read
  * 센서가 없는 판(PCB3_2: PB13 은 빈 핀)에선 존재 펄스가 없어 바로 "없음"
  */
 #pragma once

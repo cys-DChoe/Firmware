@@ -108,6 +108,14 @@ static bool io_on(void *ctx, bool on)
         __HAL_RCC_USART6_CLK_DISABLE();
         return false;
     }
+    /* 받는 FIFO(8글자) 켜기 — 1-Wire 가 비트마다 인터럽트를 최대 65 µs 막는데 115200 한 글자는 87 µs 라
+     * FIFO 없이는 여유가 20 µs 뿐 (11/24 검수 점8). 인터럽트는 같은 비트(RXFNEIE = 'FIFO 비지 않음'), 받는 쪽은 RXFNE 동안 다 비움 */
+    if (HAL_UARTEx_SetRxFifoThreshold(&u->h, UART_RXFIFO_THRESHOLD_1_8) != HAL_OK || HAL_UARTEx_EnableFifoMode(&u->h) != HAL_OK) {
+        (void)HAL_UART_DeInit(&u->h);
+        pins_analog();
+        __HAL_RCC_USART6_CLK_DISABLE();
+        return false;
+    }
     SET_BIT(u->h.Instance->CR1, USART_CR1_RXNEIE_RXFNEIE);
     HAL_NVIC_SetPriority(USART6_IRQn, 5, 0);
     HAL_NVIC_EnableIRQ(USART6_IRQn);

@@ -369,7 +369,7 @@ static void test_sensors_read(void)
 typedef struct {
     fake_t f;                   /* 맨 앞 — fk_* 함수가 그대로 씀 */
     /* 가짜 SDP810 (데이터시트 6.3.3 · 6.3.5) */
-    bool sdp_present, sdp_asleep, sdp_measuring, sdp_corrupt;
+    bool sdp_present, sdp_asleep, sdp_measuring, sdp_corrupt, sdp_read_fail;
     uint32_t sdp_t_start, sdp_wake_t;
     int16_t sdp_raw, sdp_temp, sdp_scale;
     int sdp_triggers, sdp_wake_nacks, sdp_sleeps, sdp_early_reads, sdp_traffic;
@@ -442,6 +442,10 @@ static int px_read(void *ctx, uint8_t addr, uint8_t *d, size_t n)
     }
     x->sdp_traffic++;
     if (!x->sdp_present || x->sdp_asleep || !x->sdp_measuring || n != 9) {
+        return px_note(x, -1);
+    }
+    if (x->sdp_read_fail) {                      /* 선 잡음 등으로 읽기만 한 번 실패 — 센서는 측정 끝 · 쉼 상태 */
+        x->sdp_measuring = false;
         return px_note(x, -1);
     }
     if (x->f.delay_total - x->sdp_t_start < 45u) {
@@ -556,7 +560,7 @@ static void test_ds18b20(void)
 
 static void test_next_board_sensors(void)
 {
-    printf("다음 판 센서 묶음: SDP810 깨우기 · 50 ms · 잠, DS18B20 10 초마다, 없으면 같은 버스 센서에 영향 없음\n");
+    printf("다음 판 센서 묶음: SDP810 깨우기 · 50 ms · 잠, DS18B20 60 초마다, 없으면 같은 버스 센서에 영향 없음\n");
     pgx_t x;
     memset(&x, 0, sizeof(x));
     g_px = &x;
@@ -609,20 +613,39 @@ static void test_next_board_sensors(void)
 
     g_wall = 2000;
     sensors_read(&s, &r);
-    ok("2 초: 새 변환 안 함(10 초 간격) · 최근 값 그대로", o.converts == 1 && r.e_probe == SENS_STALE && r.sample.t_probe_ok);
-    g_wall = 10000;
+    ok("2 초: 새 변환 안 함(60 초 간격) · 최근 값 그대로", o.converts == 1 && r.e_probe == SENS_STALE && r.sample.t_probe_ok);
+    g_wall = 59000;
     sensors_read(&s, &r);
-    ok("10 초: 다시 변환 시작", o.converts == 2);
+    ok("59 초: 아직 변환 안 함", o.converts == 1);
+    g_wall = 60000;
+    sensors_read(&s, &r);
+    ok("60 초: 다시 변환 시작", o.converts == 2);
 
-    printf("DS18B20 을 빼면 60 초 뒤 가스 온도를 BMP390 으로 되돌림\n");
+    printf("DS18B20 을 빼면 마지막 값에서 150 초 뒤 가스 온도를 BMP390 으로 되돌림\n");
     o.present = false;
-    for (g_wall = 11000; g_wall <= 60000; g_wall += 1000) {
+    for (g_wall = 61000; g_wall <= 151000; g_wall += 1000) {
         sensors_read(&s, &r);
     }
-    ok("60 초까지는 마지막 프로브 값", r.sample.t_probe_ok && r.sample.t_gas_c == 21.4375);
-    g_wall = 62000;
+    ok("마지막 정상값(1 초)에서 150 초까지는 그 값", r.sample.t_probe_ok && r.sample.t_gas_c == 21.4375);
+    g_wall = 152000;
     sensors_read(&s, &r);
     ok("넘으면 프로브 없음 · 가스 온도 BMP390", !r.sample.t_probe_ok && fabs(r.sample.t_gas_c - 24.196611) < 1e-5);
+
+    printf("SDP810 읽기만 한 번 실패해도 잠 명령은 보냄 (점7)\n");
+    {
+        x.sdp_read_fail = true;
+        const int sl0 = x.sdp_sleeps;
+        x.max_consec = 0;
+        sensors_read(&s, &r);
+        ok("오류 · 값 없음 · 잠 명령 보냄 · 센서 잠듦", r.e_sdp == SENS_E_BUS && !r.sample.dp2_ok && x.sdp_sleeps == sl0 + 1 &&
+                                                        x.sdp_asleep);
+        ok("실패 이어짐 2번 넘지 않음 (버스 다시 열기 문턱 3 안)", x.max_consec <= 2);
+        x.sdp_read_fail = false;
+        for (unsigned k = 0; k <= SDP810_RETRY_READS && !r.sample.dp2_ok; k++) {
+            sensors_read(&s, &r);
+        }
+        ok("다음 찾기에서 다시 값이 나옴", r.sample.dp2_ok && r.e_sdp == SENS_OK);
+    }
 
     printf("SDP810 CRC 가 틀리면 값 버리고 그래도 재움\n");
     x.sdp_corrupt = true;
