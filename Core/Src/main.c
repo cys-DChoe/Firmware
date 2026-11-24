@@ -191,7 +191,8 @@ int main(void)
     HAL_Init();
     /* USB-C '죽은 배터리' 풀다운 끄기 — PB13(TEMP_DQ) · PB14(ABP2_EOC)는 UCPD1_CC1 · CC2 겸용(FT_c)이라
      * 리셋 뒤엔 짝 핀 PA9(DB1, 빈 핀) · PC9(DB2 = I2C3_SDA, 평소 높음)에 따라 5.1 kΩ 풀다운이 걸릴 수 있음
-     * (DS14258 핀 표 · HAL 주석 "모든 경우에 끌 것" · ST 사례: PC9 높이자 PB14 3.3 → 1.5 V). UCPD 는 안 씀 (11/24 검수 점1) */
+     * (DS14258 핀 표 · HAL 주석 "모든 경우에 끌 것" · ST 사례: PC9 높이자 PB14 3.3 → 1.5 V). UCPD 는 안 씀 (11/24 검수 점1)
+     * PCB3_3 부터 PA9 는 판에서 GND 에 묶임 — PA9 를 출력으로 쓰지 말 것(높이면 단락) */
     HAL_PWREx_DisableUCPDDeadBattery();
     mpu_init();                /* 캐시를 켜기 전에: 공장 보정값 · EDATA 는 캐시 안 함 */
     HAL_ICACHE_Enable();
