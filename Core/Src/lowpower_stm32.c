@@ -92,6 +92,19 @@ uint32_t lp_time_unix(void)
     return lp_unix_from_civil(&c);
 }
 
+uint32_t lp_time_ms(void)
+{
+    RTC_TimeTypeDef t;
+    RTC_DateTypeDef d;
+    HAL_RTC_GetTime(&g_rtc, &t, RTC_FORMAT_BIN);
+    HAL_RTC_GetDate(&g_rtc, &d, RTC_FORMAT_BIN);
+    const lp_civil_t c = {(uint16_t)(2000u + d.Year), d.Month, d.Date, t.Hours, t.Minutes, t.Seconds};
+    /* 아래 초(SubSeconds)는 SecondFraction 에서 0 으로 내려감 */
+    const uint32_t frac = t.SecondFraction + 1u;
+    const uint32_t sub_ms = (frac - 1u - t.SubSeconds) * 1000u / frac;
+    return lp_unix_from_civil(&c) * 1000u + sub_ms;
+}
+
 HAL_StatusTypeDef lp_set_time_unix(uint32_t ts)
 {
     lp_civil_t c;

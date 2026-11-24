@@ -66,6 +66,11 @@ typedef struct {
     double t_gas_c;     /* 가스 온도 */
     double patm_pa;     /* 대기압 (BMP390) */
     bool patm_held;     /* 기압을 못 재서 마지막 값(한 번도 못 쟀으면 해수면 값)을 씀 — 계산은 이 값으로 함 */
+    /* 비교 시험용 (다음 판 · 계산에는 안 씀, 1분 보고 24 · 26 번에만): */
+    bool dp2_ok;        /* SDP810 값이 있음 */
+    double dp2_pa;      /* SDP810 차압 (영점 안 뺌) */
+    bool t_probe_ok;    /* DS18B20 값이 있음 (그때 t_gas_c 도 이 값) */
+    double t_probe_c;   /* DS18B20 온도 */
 } meter_sample_t;
 
 /* 1분 요약 — 저장 · 보고에 씀 */

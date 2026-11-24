@@ -1,3 +1,4 @@
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include "app.h"
@@ -321,6 +322,11 @@ static void build_report(app_t *a, const meter_minute_t *mm, uint32_t now, repor
     if (mm->secs < 54.0) f |= REPORT_F_INCOMPLETE;
     if (a->baro_held_min) f |= REPORT_F_BARO_HELD;
     a->baro_held_min = false;
+    /* 비교 시험용 두 칸: 이 분에 읽은 값의 평균, 없으면 NAN → 0x8000 */
+    r->sdp_dp_pa = a->sdp_n > 0u ? a->sdp_sum / (double)a->sdp_n : NAN;
+    r->t_probe_c = a->probe_n > 0u ? a->probe_sum / (double)a->probe_n : NAN;
+    a->sdp_sum = a->probe_sum = 0.0;
+    a->sdp_n = a->probe_n = 0u;
     const uint16_t mv = a->hw.batt_mv != NULL ? a->hw.batt_mv(a->hw.ctx) : 0u;
     if (mv != 0u) {
         a->batt_flags = report_battery_flags(mv, a->batt_flags);
@@ -346,11 +352,11 @@ static void do_minute(app_t *a, uint32_t now)
     build_report(a, &mm, now, &r);
     {
         /* 보드에서 값을 바로 보게 1분마다 한 줄 (보드 오면 2 · 4 · 7단계) */
-        char m[224];                    /* 보통 155 B, 값이 다 커도 180 B 안 (11/18 검수: 160 이면 끝이 잘림) */
+        char m[288];                    /* 보통 200 B, 값이 다 커도 240 B 안 (11/24 SDP810 · DS18B20 두 칸 더함) */
         snprintf(m, sizeof(m),
-                 "1분 #%u: 차압 %.2f Pa · 정압 %.0f Pa · 기압 %.0f Pa · 온도 %.1f C · 셀 %u mV · 유량 %.3f Nm3/h · 누적 %.4f Nm3 · 비트 %04X",
+                 "1분 #%u: 차압 %.2f Pa · 정압 %.0f Pa · 기압 %.0f Pa · 온도 %.1f C · 셀 %u mV · 유량 %.3f Nm3/h · 누적 %.4f Nm3 · 비트 %04X · SDP810 %.2f Pa · DS18B20 %.2f C",
                  (unsigned)r.seq, r.dp_pa, r.pg_pa, r.patm_pa, r.t_c, (unsigned)r.batt_mv, r.flow_nm3h, r.total_nm3,
-                 (unsigned)r.flags);
+                 (unsigned)r.flags, r.sdp_dp_pa, r.t_probe_c);
         say(a, m);
     }
     uint8_t bytes[REPORT_LEN];
@@ -763,6 +769,14 @@ uint32_t app_step(app_t *a)
         }
     }
 
+    if (got && s.dp2_ok && a->sdp_n < UINT16_MAX) {
+        a->sdp_sum += s.dp2_pa;
+        a->sdp_n++;
+    }
+    if (got && s.t_probe_ok && a->probe_n < UINT16_MAX) {
+        a->probe_sum += s.t_probe_c;
+        a->probe_n++;
+    }
     a->prev_ok = got;
     a->read_ok = got;
     a->baro_held = got && s.patm_held;

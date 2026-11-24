@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""1분 보고(형식 v1, 24바이트) 풀기 — 서버 쪽 참고 구현.
+"""1분 보고(형식 v2 28바이트 · 옛 v1 24바이트) 풀기 — 서버 쪽 참고 구현.
+
+v2(11/24) = v1 24바이트 + SDP810 차압 1분 평균(0.02 Pa) + DS18B20 온도(0.01 °C), 둘 다 부호 있는 16비트, 0x8000 = 없음.
 
 펌웨어의 Core/Inc/report.h 표와 같은 형식. C 코드와 따로 짰고,
 tests/host/run.sh 가 C 가 묶은 값을 이걸로 풀어 맞는지 확인함.
@@ -12,8 +14,10 @@ tests/host/run.sh 가 C 가 묶은 값을 이걸로 풀어 맞는지 확인함.
 import struct
 import sys
 
-LEN = 24
-FMT = ">BHIIHhhhHBH"   # 버전 · 순번 · 시각 · 누적 · 유량 · 정압 · 차압 · 온도 · 대기압 · 배터리 · 상태
+LEN = 28
+LEN_V1 = 24
+FMT = ">BHIIHhhhHBH"   # 버전 · 순번 · 시각 · 누적 · 유량 · 정압 · 차압 · 온도 · 대기압 · 배터리 · 상태 (앞 24 B)
+NONE16 = -32768        # 24 · 26 번 "값 없음"
 
 FLAGS = [
     "FLOWING",        # 조리 중
@@ -36,11 +40,14 @@ FLAGS = [
 
 
 def decode(buf: bytes) -> dict:
-    if len(buf) != LEN:
-        raise ValueError(f"길이가 {len(buf)} 바이트임 (24 여야 함)")
-    ver, seq, unix_s, total, flow, pg, dp, t, patm, batt, flags = struct.unpack(FMT, buf)
-    if ver != 1:
-        raise ValueError(f"모르는 형식 버전 {ver}")
+    if len(buf) not in (LEN, LEN_V1):
+        raise ValueError(f"길이가 {len(buf)} 바이트임 (28 · 옛 24 여야 함)")
+    ver, seq, unix_s, total, flow, pg, dp, t, patm, batt, flags = struct.unpack(FMT, buf[:LEN_V1])
+    if (ver, len(buf)) not in ((2, LEN), (1, LEN_V1)):
+        raise ValueError(f"형식 버전 {ver} 과 길이 {len(buf)} 가 안 맞음")
+    sdp = probe = NONE16
+    if ver == 2:
+        sdp, probe = struct.unpack(">hh", buf[LEN_V1:])
     return {
         "version": ver,
         "seq": seq,
@@ -54,12 +61,14 @@ def decode(buf: bytes) -> dict:
         "batt_mv": batt * 10 + 2500,
         "flags": flags,
         "flag_names": [n for i, n in enumerate(FLAGS) if flags & (1 << i)],
+        "sdp810_pa": None if sdp == NONE16 else sdp / 50.0,
+        "ds18b20_c": None if probe == NONE16 else probe / 100.0,
     }
 
 
 # 눈금의 절반 = 반올림으로 생길 수 있는 최대 차이
 TOL = {"total_nm3": 0.00005, "flow_nm3h": 0.0005, "pg_pa": 0.5, "dp_pa": 0.025,
-       "t_c": 0.05, "patm_pa": 0.5, "batt_mv": 5}
+       "t_c": 0.05, "patm_pa": 0.5, "batt_mv": 5, "sdp810_pa": 0.01, "ds18b20_c": 0.005}
 
 
 COUNTS_FMT = ">BHIIII"   # 버전 · 1분 보고 순번 · 조리 · 고갈 · 방출 분 · 누설(계량기 뒤)
@@ -77,7 +86,8 @@ def decode_counts(buf: bytes) -> dict:
 
 
 def selftest(path: str) -> int:
-    keys = ["seq", "unix_s", "total_nm3", "flow_nm3h", "pg_pa", "dp_pa", "t_c", "patm_pa", "batt_mv", "flags"]
+    keys = ["seq", "unix_s", "total_nm3", "flow_nm3h", "pg_pa", "dp_pa", "t_c", "patm_pa", "batt_mv", "flags",
+            "sdp810_pa", "ds18b20_c"]
     bad = n = 0
     for line in open(path, encoding="utf-8"):
         line = line.strip()
@@ -99,6 +109,10 @@ def selftest(path: str) -> int:
             n += 1
             if k == "flags":
                 ok = got[k] == int(want[k])
+            elif want[k] != want[k]:          # C 쪽 NAN = 없음
+                ok = got[k] is None
+            elif got[k] is None:
+                ok = False
             else:
                 ok = abs(got[k] - want[k]) <= TOL.get(k, 0) + 1e-9
             if not ok:

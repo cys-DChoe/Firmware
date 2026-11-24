@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "abp2.h"
+#include "ds18b20.h"
 #include "bmp390.h"
 #include "hsc.h"
 #include "i2c_timing.h"
@@ -362,6 +363,304 @@ static void test_sensors_read(void)
     ok("전원 끔", !power_state && !s.powered);
 }
 
+
+/* ---------- 다음 판 센서: SDP810 (I2C3 0x25) · DS18B20 (1-Wire) ---------- */
+
+typedef struct {
+    fake_t f;                   /* 맨 앞 — fk_* 함수가 그대로 씀 */
+    /* 가짜 SDP810 (데이터시트 6.3.3 · 6.3.5) */
+    bool sdp_present, sdp_asleep, sdp_measuring, sdp_corrupt;
+    uint32_t sdp_t_start, sdp_wake_t;
+    int16_t sdp_raw, sdp_temp, sdp_scale;
+    int sdp_triggers, sdp_wake_nacks, sdp_sleeps, sdp_early_reads, sdp_traffic;
+    /* 버스 실패 이어짐 (i2c_stm32.c: 3번 이어지면 버스를 다시 엶) */
+    int consec, max_consec;
+} pgx_t;
+
+static pgx_t *g_px;
+static uint32_t px_tick(void) { return g_px->f.delay_total; }
+static uint32_t g_wall;
+static uint32_t px_wall(void) { return g_wall; }
+
+static int px_note(pgx_t *x, int rc)
+{
+    x->consec = rc != 0 ? x->consec + 1 : 0;
+    if (x->consec > x->max_consec) {
+        x->max_consec = x->consec;
+    }
+    return rc;
+}
+
+static uint8_t crc_sens(uint8_t a, uint8_t b)
+{
+    const uint8_t two[2] = {a, b};
+    return sdp810_crc8(two);
+}
+
+static int px_write(void *ctx, uint8_t addr, const uint8_t *d, size_t n)
+{
+    pgx_t *x = ctx;
+    if (addr != SDP810_ADDR) {
+        return px_note(x, fk_write(ctx, addr, d, n));
+    }
+    x->sdp_traffic++;
+    const uint32_t now = x->f.delay_total;
+    if (!x->sdp_present) {
+        return px_note(x, -1);
+    }
+    if (x->sdp_asleep) {                         /* 주소 + 쓰기로 깸, 그 쓰기엔 답 없음 */
+        x->sdp_asleep = false;
+        x->sdp_wake_t = now;
+        x->sdp_wake_nacks++;
+        return px_note(x, -1);
+    }
+    if (now - x->sdp_wake_t < 2u) {
+        return px_note(x, -1);                   /* 아직 깨는 중 */
+    }
+    if (x->sdp_measuring && now - x->sdp_t_start < 45u) {
+        return px_note(x, -1);                   /* 측정 중엔 명령 못 받음 */
+    }
+    if (n == 2 && d[0] == 0x36 && d[1] == 0x2F) {
+        x->sdp_measuring = true;
+        x->sdp_t_start = now;
+        x->sdp_triggers++;
+        return px_note(x, 0);
+    }
+    if (n == 2 && d[0] == 0x36 && d[1] == 0x77) {
+        x->sdp_asleep = true;
+        x->sdp_sleeps++;
+        return px_note(x, 0);
+    }
+    return px_note(x, -1);
+}
+
+static int px_read(void *ctx, uint8_t addr, uint8_t *d, size_t n)
+{
+    pgx_t *x = ctx;
+    if (addr != SDP810_ADDR) {
+        return px_note(x, fk_read_pg(ctx, addr, d, n));
+    }
+    x->sdp_traffic++;
+    if (!x->sdp_present || x->sdp_asleep || !x->sdp_measuring || n != 9) {
+        return px_note(x, -1);
+    }
+    if (x->f.delay_total - x->sdp_t_start < 45u) {
+        x->sdp_early_reads++;
+        return px_note(x, -1);                   /* 아직 결과 없음 → 읽기 머리에 답 안 함 */
+    }
+    const int16_t v[3] = {x->sdp_raw, x->sdp_temp, x->sdp_scale};
+    for (int i = 0; i < 3; i++) {
+        d[i * 3] = (uint8_t)((uint16_t)v[i] >> 8);
+        d[i * 3 + 1] = (uint8_t)v[i];
+        d[i * 3 + 2] = crc_sens(d[i * 3], d[i * 3 + 1]);
+    }
+    if (x->sdp_corrupt) {
+        d[2] ^= 0x01u;
+    }
+    x->sdp_measuring = false;                    /* 측정 끝 · 쉼 상태 */
+    return px_note(x, 0);
+}
+
+static int px_write_read(void *ctx, uint8_t addr, const uint8_t *w, size_t wn, uint8_t *r, size_t rn)
+{
+    return px_note(ctx, fk_write_read(ctx, addr, w, wn, r, rn));
+}
+
+/* 가짜 DS18B20 — 비트 단위로 명령을 받아 스크래치패드를 비트로 내보냄 (작은 비트 먼저) */
+typedef struct {
+    bool present;
+    uint8_t pad[9];
+    uint8_t cur;
+    int nbits;
+    uint8_t last_cmd;
+    bool reading;
+    int ridx;
+    int converts, resets;
+} fow_t;
+
+static bool fow_reset(void *ctx)
+{
+    fow_t *o = ctx;
+    o->resets++;
+    o->nbits = 0;
+    o->cur = 0;
+    o->reading = false;
+    o->last_cmd = 0;
+    return o->present;
+}
+
+static void fow_write_bit(void *ctx, bool bit)
+{
+    fow_t *o = ctx;
+    if (bit) {
+        o->cur |= (uint8_t)(1u << o->nbits);
+    }
+    if (++o->nbits == 8) {
+        if (o->last_cmd == 0xCC && o->cur == 0x44) {
+            o->converts++;
+        }
+        if (o->last_cmd == 0xCC && o->cur == 0xBE) {
+            o->reading = true;
+            o->ridx = 0;
+        }
+        o->last_cmd = o->cur;
+        o->cur = 0;
+        o->nbits = 0;
+    }
+}
+
+static bool fow_read_bit(void *ctx)
+{
+    fow_t *o = ctx;
+    if (!o->present || !o->reading || o->ridx >= 72) {
+        return true;                             /* 아무도 안 당기면 풀업으로 1 */
+    }
+    const bool b = (o->pad[o->ridx / 8] >> (o->ridx % 8)) & 1u;
+    o->ridx++;
+    return b;
+}
+
+static void fow_temp(fow_t *o, int16_t raw)
+{
+    const uint8_t p[8] = {(uint8_t)raw, (uint8_t)((uint16_t)raw >> 8), 0x4B, 0x46, 0x7F, 0xFF, 0x0C, 0x10};
+    memcpy(o->pad, p, 8);
+    o->pad[8] = onewire_crc8(o->pad, 8);
+}
+
+static void test_ds18b20(void)
+{
+    printf("DS18B20 (1-Wire, 데이터시트 Dallas 050400)\n");
+    const uint8_t rom[7] = {0x02, 0x1C, 0xB8, 0x01, 0x00, 0x00, 0x00};
+    ok("CRC-8 = A2h (Maxim 설명서 예: 02 1C B8 01 00 00 00)", onewire_crc8(rom, 7) == 0xA2u);
+    fow_t o;
+    memset(&o, 0, sizeof(o));
+    o.present = true;
+    const onewire_t ow = {fow_reset, fow_write_bit, fow_read_bit, &o};
+    ok("변환 시작: 존재 펄스 · CC 44 받음", ds18b20_convert(&ow) == SENS_OK && o.converts == 1);
+    fow_temp(&o, 0x0157);                        /* 343 ÷ 16 = 21.4375 °C */
+    double t = 0.0;
+    ok("읽기 OK", ds18b20_read(&ow, &t) == SENS_OK);
+    near("21.4375 °C (0x0157 ÷ 16)", t, 21.4375, 1e-9);
+    fow_temp(&o, (int16_t)0xFF5E);               /* 데이터시트 표: −10.125 °C */
+    ok("영하 −10.125 °C (FF5Eh)", ds18b20_read(&ow, &t) == SENS_OK && t == -10.125);
+    fow_temp(&o, 0x0550);
+    ok("85.0 °C (켠 뒤 기본값) → 아직 안 잰 값", ds18b20_read(&ow, &t) == SENS_STALE);
+    fow_temp(&o, 0x0157);
+    o.pad[8] ^= 0x10u;
+    ok("CRC 틀림 → 오류", ds18b20_read(&ow, &t) == SENS_E_STATUS);
+    memset(o.pad, 0, sizeof(o.pad));
+    ok("전부 0(선이 낮게 붙음, CRC 도 0) → 오류", ds18b20_read(&ow, &t) == SENS_E_STATUS);
+    o.present = false;
+    ok("존재 펄스 없음 → 없음(버스 오류)", ds18b20_convert(&ow) == SENS_E_BUS && ds18b20_read(&ow, &t) == SENS_E_BUS);
+}
+
+static void test_next_board_sensors(void)
+{
+    printf("다음 판 센서 묶음: SDP810 깨우기 · 50 ms · 잠, DS18B20 10 초마다, 없으면 같은 버스 센서에 영향 없음\n");
+    pgx_t x;
+    memset(&x, 0, sizeof(x));
+    g_px = &x;
+    fake_t *f = &x.f;
+    hsc_bytes(f->hsc, 0, (uint16_t)(8192 + 32.4 * 13108.0 / 2000.0 + 0.5), 768);
+    abp2_bytes(f->abp2, 0x40, 1677722 + (15099494 - 1677722) / 20, 6291456);
+    f->bmp[0x00] = 0x60;
+    memcpy(&f->bmp[0x31], CAL_A, 21);
+    f->bmp_status_after_measure = 0x70;
+    bmp_raw(f, 9000000u, 8400000u);
+    x.sdp_present = true;
+    x.sdp_asleep = true;                         /* 지난 읽기 뒤 잠든 상태로 시작 */
+    x.sdp_raw = 1912;                            /* 1912 ÷ 60 = 31.87 Pa */
+    x.sdp_temp = 4500;                           /* ÷ 200 = 22.5 °C */
+    x.sdp_scale = 60;
+    fow_t o;
+    memset(&o, 0, sizeof(o));
+    o.present = true;
+    fow_temp(&o, 0x0157);
+    const onewire_t ow = {fow_reset, fow_write_bit, fow_read_bit, &o};
+    i2c_bus_t dp = {fk_write, fk_read_dp, fk_write_read, fk_delay, f};
+    i2c_bus_t pg = {px_write, px_read, px_write_read, fk_delay, &x};
+    sensors_t s;
+    sensors_init(&s, &dp, &pg, fake_power);
+    sensors_set_extra(&s, &ow, px_tick, px_wall);
+    sensors_power_on(&s);
+    sensors_result_t r;
+
+    g_wall = 0;
+    uint32_t d0 = f->delay_total;
+    sensors_read(&s, &r);
+    ok("세 센서 그대로 OK", r.e_dp == SENS_OK && r.e_pg == SENS_OK && r.e_baro == SENS_OK && r.usable);
+    ok("SDP810: 깨우기 답 없음 1번 → 다시 시작 → 읽음", r.e_sdp == SENS_OK && r.sample.dp2_ok && x.sdp_wake_nacks == 1 &&
+                                                            x.sdp_triggers == 1);
+    near("SDP810 차압 Pa (1912 ÷ 60)", r.sample.dp2_pa, 31.866667, 1e-5);
+    near("SDP810 칩 온도 °C (4500 ÷ 200)", r.t_sdp_c, 22.5, 1e-9);
+    ok("측정 중엔 안 물음 (이른 읽기 0)", x.sdp_early_reads == 0);
+    ok("읽은 뒤 다시 잠 (잠 명령 1번)", x.sdp_asleep && x.sdp_sleeps == 1);
+    ok("버스 실패가 이어져도 1번 (다시 열기 문턱 3 안)", x.max_consec <= 1);
+    ok("읽기 한 번 시간 ≤ 60 ms (SDP 50 ms 를 다른 센서와 겹쳐 씀)", f->delay_total - d0 <= 60u);
+    ok("DS18B20: 처음엔 변환만 시작 · 가스 온도는 BMP390", r.e_probe == SENS_E_BUS && !r.sample.t_probe_ok &&
+                                                                o.converts == 1 && fabs(r.sample.t_gas_c - 24.196611) < 1e-5);
+
+    g_wall = 1000;
+    sensors_read(&s, &r);
+    ok("1 초 뒤: DS18B20 읽음 · 가스 온도 = 프로브", r.e_probe == SENS_OK && r.sample.t_probe_ok &&
+                                                       r.sample.t_gas_c == 21.4375 && r.sample.t_probe_c == 21.4375);
+    near("함체 안 온도(BMP390)는 따로 남음", r.t_board_c, 24.196611, 1e-5);
+    ok("SDP810 두 번째도 OK (깨우기 2번째)", r.e_sdp == SENS_OK && x.sdp_wake_nacks == 2 && x.max_consec <= 1);
+
+    g_wall = 2000;
+    sensors_read(&s, &r);
+    ok("2 초: 새 변환 안 함(10 초 간격) · 최근 값 그대로", o.converts == 1 && r.e_probe == SENS_STALE && r.sample.t_probe_ok);
+    g_wall = 10000;
+    sensors_read(&s, &r);
+    ok("10 초: 다시 변환 시작", o.converts == 2);
+
+    printf("DS18B20 을 빼면 60 초 뒤 가스 온도를 BMP390 으로 되돌림\n");
+    o.present = false;
+    for (g_wall = 11000; g_wall <= 60000; g_wall += 1000) {
+        sensors_read(&s, &r);
+    }
+    ok("60 초까지는 마지막 프로브 값", r.sample.t_probe_ok && r.sample.t_gas_c == 21.4375);
+    g_wall = 62000;
+    sensors_read(&s, &r);
+    ok("넘으면 프로브 없음 · 가스 온도 BMP390", !r.sample.t_probe_ok && fabs(r.sample.t_gas_c - 24.196611) < 1e-5);
+
+    printf("SDP810 CRC 가 틀리면 값 버리고 그래도 재움\n");
+    x.sdp_corrupt = true;
+    const int sl = x.sdp_sleeps;
+    sensors_read(&s, &r);
+    ok("오류 · 값 없음 · 잠 명령 보냄", r.e_sdp == SENS_E_STATUS && !r.sample.dp2_ok && x.sdp_sleeps == sl + 1);
+    x.sdp_corrupt = false;
+
+    printf("SDP810 이 없는 판: 60 번 읽을 때마다 한 번만 찾고, 같은 버스의 ABP2 · BMP390 은 그대로\n");
+    x.sdp_present = false;
+    x.max_consec = 0;
+    sensors_read(&s, &r);
+    ok("처음 한 번 찾아봄(쓰기 2번 답 없음) → 없음", r.e_sdp == SENS_E_BUS && !r.sample.dp2_ok && x.max_consec == 2);
+    const int tr = x.sdp_traffic;
+    bool pg_ok = true;
+    for (unsigned k = 0; k < SDP810_RETRY_READS; k++) {
+        sensors_read(&s, &r);
+        pg_ok = pg_ok && r.e_pg == SENS_OK && r.e_baro == SENS_OK;
+    }
+    ok("다음 60 번 동안 0x25 를 안 건드림", x.sdp_traffic == tr);
+    ok("그동안 ABP2 · BMP390 은 늘 OK · 실패 이어짐 2번 넘지 않음", pg_ok && x.max_consec <= 2);
+    sensors_read(&s, &r);
+    ok("61 번째에 다시 찾아봄", x.sdp_traffic == tr + 2);
+    x.sdp_present = true;
+    x.sdp_asleep = false;
+    for (unsigned k = 0; k <= SDP810_RETRY_READS && !r.sample.dp2_ok; k++) {
+        sensors_read(&s, &r);
+    }
+    ok("다시 꽂으면 다음 찾기에서 값이 나옴", r.sample.dp2_ok && r.e_sdp == SENS_OK);
+
+    printf("ms 시계가 없으면 SDP810 은 50 ms 를 다 기다림\n");
+    sensors_set_extra(&s, NULL, NULL, NULL);
+    d0 = f->delay_total;
+    sensors_read(&s, &r);
+    ok("값 OK · 이른 읽기 0 · DS18B20 안 씀", r.e_sdp == SENS_OK && x.sdp_early_reads == 0 && r.e_probe == SENS_E_BUS);
+    ok("기다림 ≥ 50 ms", f->delay_total - d0 >= 50u);
+}
+
 static void test_i2c_timing(void)
 {
     printf("I2C 100 kHz 타이밍 값\n");
@@ -377,6 +676,8 @@ int main(void)
     test_abp2();
     test_bmp390();
     test_sensors_read();
+    test_ds18b20();
+    test_next_board_sensors();
     test_i2c_timing();
     printf("\n%d / %d 통과\n", checks - fails, checks);
     return fails ? 1 : 0;

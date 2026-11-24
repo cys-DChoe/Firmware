@@ -1,6 +1,7 @@
-/* 1분 보고 묶기 — LoRa 로 보내는 24바이트 (설계서 4번: 항목 10개, 한도 32바이트)
+/* 1분 보고 묶기 — LoRa 로 보내는 28바이트 (설계서 4번: 한도 32바이트)
  *
- * 형식 v1, 모든 값은 큰 쪽 먼저(big-endian), 범위를 넘으면 끝값으로 자르고 CLIPPED 표시.
+ * 형식 v2(11/24, 다음 판 센서 추가): v1 24바이트 뒤에 4바이트(SDP810 · DS18B20)를 붙임.
+ * 모든 값은 큰 쪽 먼저(big-endian), 범위를 넘으면 끝값으로 자르고 CLIPPED 표시.
  *
  *  자리  크기  항목            단위 · 눈금                 범위
  *   0    1    형식 버전        1                           —
@@ -14,6 +15,12 @@
  *  19    2    대기압          1 Pa, 50,000 Pa 를 뺀 값     50,000–115,535 Pa
  *  21    1    배터리          10 mV, 2.5 V 를 뺀 값        2.50–5.05 V
  *  22    2    상태 비트        아래 REPORT_F_*              —
+ *  24    2    SDP810 차압     0.02 Pa, 부호 있음, 1분 평균  ±655 Pa   없으면 0x8000
+ *  26    2    DS18B20 온도    0.01 °C, 부호 있음           ±327 °C   없으면 0x8000
+ *
+ * 가스 온도(17번)는 계산에 쓴 값: DS18B20 이 있으면 그 값, 없으면 BMP390 칩 온도(전처럼).
+ * 24 · 26 번은 비교 시험용 원래 값 — 센서가 없는 판(PCB3_2 등)에선 늘 0x8000.
+ * v1(24 B)도 풀 수 있음(두 칸은 없음으로). Nucleo 벤치 꼬리(11/23)와 같은 눈금 · 자리.
  *
  * 자릿수는 서버 담당과 맞출 때 바꿀 수 있음 — 바꾸면 형식 버전을 올림.
  * 서버 쪽 풀기 참고: tools/report_decode.py
@@ -24,8 +31,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define REPORT_VERSION   1u
-#define REPORT_LEN       24u
+#define REPORT_VERSION   2u
+#define REPORT_LEN       28u
+#define REPORT_V1_LEN    24u
+#define REPORT_NONE16    0x8000u   /* 24 · 26 번 "값 없음" */
 
 /* 상태 비트 */
 #define REPORT_F_FLOWING        (1u << 0)   /* 이 분에 조리(사용 이벤트) 중이었음 */
@@ -56,12 +65,14 @@ typedef struct {
     double patm_pa;         /* 대기압 */
     uint16_t batt_mv;       /* 셀 전압 */
     uint16_t flags;         /* REPORT_F_* */
+    double sdp_dp_pa;       /* SDP810 1분 평균 차압 — NAN = 없음 */
+    double t_probe_c;       /* DS18B20 온도 — NAN = 없음 */
 } report_t;
 
 /* 묶기: out 에 REPORT_LEN 바이트를 씀. 잘린 값이 있으면 CLIPPED 를 켜서 씀. 쓴 길이를 돌려줌. */
 size_t report_encode(const report_t *r, uint8_t out[REPORT_LEN]);
 
-/* 풀기: 길이 · 버전이 맞으면 true */
+/* 풀기: v2(28 B) 또는 v1(24 B, 두 칸은 NAN)이면 true */
 bool report_decode(const uint8_t *in, size_t len, report_t *r);
 
 /* 횟수 보고 (LoRa 포트 3, 11/18) — 1분 보고(24 B · 링 칸 32 B 고정)와 따로 보냄

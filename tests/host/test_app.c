@@ -35,7 +35,7 @@ typedef struct {
     int flash_on_calls;
     char last_log[96];
     int minute_logs;            /* "1분 #" 로 시작하는 로그 수 */
-    char minute_log[192];
+    char minute_log[320];
 } board_t;
 
 static board_t B;
@@ -229,13 +229,14 @@ int main(void)
     ok("가입됨", R.joined);
     ok("보낸 게 있고 보낸 표시가 링에 남음", A.sent >= 3 && A.resends >= 3);
     ok("최근 기록 중 못 보낸 것 없음", ring_find_unsent(&RING, 60, &seq) == RING_E_MISSING);
-    int sends = 0;
+    int sends = 0, len_ok = 0;
     for (int i = 0; i < F.nlog; i++) {
         if (strncmp(F.log[i], "AT+SEND=1:", 10) == 0) {
             sends++;
+            len_ok += strspn(F.log[i] + 10, "0123456789ABCDEFabcdef") == 2u * REPORT_LEN;
         }
     }
-    ok("포트 1 · 24바이트(48자)로 보냄", sends >= 1);
+    ok("포트 1 · 28바이트(56자, 보고 v2)로 보냄", sends >= 1 && len_ok == sends);
 
     printf("조리 (차압 40 Pa) → 1초마다 깨고 누적이 늘어남\n");
     const double before = A.meter.total_nm3;
@@ -776,10 +777,11 @@ int main(void)
             B.s.patm_pa = 115535.0;
             run_ack(60);
             const size_t L = strlen(B.minute_log);
-            ok("값이 다 커도 줄 끝(상태 비트 4자리)까지 안 잘림",
+            const char *bits = strstr(B.minute_log, "비트 ");
+            ok("값이 다 커도 줄 끝(SDP810 · DS18B20 두 칸)까지 안 잘림",
                L > 8u && strstr(B.minute_log, "#54321") != NULL && strstr(B.minute_log, "누적 1234.") != NULL &&
-                   strstr(B.minute_log, "비트 ") == B.minute_log + L - 4 - strlen("비트 ") &&
-                   strspn(B.minute_log + L - 4, "0123456789ABCDEF") == 4u);
+                   bits != NULL && strspn(bits + strlen("비트 "), "0123456789ABCDEF") == 4u &&
+                   strstr(B.minute_log, " · SDP810 ") != NULL && strcmp(B.minute_log + L - 2, " C") == 0);
             A.counter.report_seq = keep;
             A.meter.total_nm3 = keep_tot;
             idle_gas();

@@ -40,7 +40,9 @@ _estack = ORIGIN(RAM) + LENGTH(RAM); /* end of "RAM" Ram type memory */
 _sstack = _estack - _Min_Stack_Size;
 
 _Min_Heap_Size = 0x200; /* required amount of heap */
-_Min_Stack_Size = 0x400; /* required amount of stack */
+/* 스택 16 KB — 시작 코드가 _sstack 을 MSPLIM(스택 한계)으로 걸어서, 넘으면 HardFault(STKOF)로 멈춤.
+   11/23 잰 값: 흐름 중 meter_step 5.5 KB · LoRa 설정 약 3.1 KB · 1분 로그 약 1.3 KB (예전 값 0x400 = 1 KB 로는 전부 넘침) */
+_Min_Stack_Size = 0x4000; /* required amount of stack */
 
 /* Memories definition */
 MEMORY

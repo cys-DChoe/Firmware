@@ -74,7 +74,7 @@ static void test_ring_basic(void)
     chip_new();
     ring_t r;
     ok("빈 칩 → 순번 0 부터", ring_mount(&r, &DEV, 0, RING_DEFAULT_SECTORS) == RING_OK && r.next_seq == 0);
-    ok("기본 칸 수 393,216 ≥ 90일(129,600)", r.slots == 393216u && r.slots >= RING_90_DAYS);
+    ok("기본 칸 수 196,608 ≥ 90일(129,600)", r.slots == 196608u && r.slots >= RING_90_DAYS);
     uint8_t rep[RING_REPORT_SIZE];
     uint32_t seq = 99;
     for (uint32_t i = 0; i < 3; i++) {
@@ -85,10 +85,14 @@ static void test_ring_basic(void)
     ok("읽은 값 = 쓴 값", read_matches(&r, 0, 0) && read_matches(&r, 2, 2));
     ok("아직 안 쓴 순번 3 은 없음", !read_matches(&r, 3, 3));
     ok("첫 칸 쓸 때 섹터 한 번 지움", C.erases == 1);
-    const uint8_t *raw = C.mem + 32;
-    ok("칸 배치: 순번(작은 쪽 먼저) · 보고 24 B · 표시 FFh · 예비 FFh · CRC",
-       raw[0] == 1 && raw[1] == 0 && raw[4] == 7 && raw[28] == 0xFF && raw[29] == 0xFF &&
-           (raw[30] | raw[31] << 8) == ring_crc16(raw, 28));
+    const uint8_t *raw = C.mem + 64;
+    bool tail_ff = true;
+    for (int k = 36; k < 64; k++) {
+        tail_ff = tail_ff && raw[k] == 0xFF;
+    }
+    ok("칸 배치(64 B): 순번(작은 쪽 먼저) · 보고 28 B · 표시 FFh · 예비 FFh · CRC(0–31) · 36–63 FFh",
+       raw[0] == 1 && raw[1] == 0 && raw[4] == 7 && raw[31] == (uint8_t)(7 + 27) && raw[32] == 0xFF && raw[33] == 0xFF &&
+           (raw[34] | raw[35] << 8) == ring_crc16(raw, 32) && tail_ff);
 
     ring_t r2;
     ok("다시 켜면 다음 순번 3", ring_mount(&r2, &DEV, 0, RING_DEFAULT_SECTORS) == RING_OK && r2.next_seq == 3);
@@ -99,7 +103,7 @@ static void test_ring_basic(void)
 
 static void test_ring_wrap(void)
 {
-    printf("링 — 한 바퀴 넘기기 (4섹터 = 512칸으로 줄여 시험)\n");
+    printf("링 — 한 바퀴 넘기기 (4섹터 = 256칸으로 줄여 시험)\n");
     chip_new();
     ring_t r;
     ring_mount(&r, &DEV, 0x100000, 4);
@@ -109,13 +113,13 @@ static void test_ring_wrap(void)
         ring_append(&r, rep, NULL);
     }
     ok("600개 쓰면 다음 순번 600", r.next_seq == 600);
-    ok("가장 오래 남은 순번 128 (0–127 섹터는 지워짐)", r.oldest_seq == 128);
-    ok("순번 127 없음 · 128 있음 · 599 있음", !read_matches(&r, 127, 127) && read_matches(&r, 128, 128) && read_matches(&r, 599, 599));
-    ok("섹터 지우기 5번 (512칸 + 1섹터)", C.erases == 5);
+    ok("가장 오래 남은 순번 384 (쓰는 섹터 576–639 바로 다음 섹터부터)", r.oldest_seq == 384);
+    ok("순번 383 없음 · 384 있음 · 599 있음", !read_matches(&r, 383, 383) && read_matches(&r, 384, 384) && read_matches(&r, 599, 599));
+    ok("섹터 지우기 10번 (600칸 ÷ 64칸, 섹터 첫 칸마다)", C.erases == 10);
     ok("링 밖(0x100000 앞) 은 안 건드림", C.mem[0x0FFFFF] == 0xFF && C.mem[0x104000] == 0xFF);
     ring_t r2;
     ring_mount(&r2, &DEV, 0x100000, 4);
-    ok("다시 켜도 600 · 128", r2.next_seq == 600 && r2.oldest_seq == 128);
+    ok("다시 켜도 600 · 384", r2.next_seq == 600 && r2.oldest_seq == 384);
 }
 
 static void test_ring_power_cut(void)
@@ -123,7 +127,7 @@ static void test_ring_power_cut(void)
     printf("링 — 쓰다가 전원 끊김\n");
     chip_new();
     ring_t r;
-    ring_mount(&r, &DEV, 0, 4);
+    ring_mount(&r, &DEV, 0, 8);   /* 8섹터 = 512칸 (64칸/섹터) */
     uint8_t rep[RING_REPORT_SIZE];
     for (uint32_t i = 0; i < 300; i++) {
         rep_for(i, rep);
@@ -134,7 +138,7 @@ static void test_ring_power_cut(void)
     ring_append(&r, rep, NULL);
     C.dead = false;
     ring_t r2;
-    ring_mount(&r2, &DEV, 0, 4);
+    ring_mount(&r2, &DEV, 0, 8);
     ok("다시 켜면 깨진 칸 건너 다음 순번 301", r2.next_seq == 301);
     ok("깨진 300 은 없음 · 299 는 있음", !read_matches(&r2, 300, 300) && read_matches(&r2, 299, 299));
     ring_rec_t last;
@@ -148,12 +152,12 @@ static void test_ring_power_cut(void)
         rep_for(i, rep);
         ring_append(&r2, rep, NULL);
     }
-    C.cut_program_at = 5;                     /* 순번 384 = 섹터 3 첫 칸 */
+    C.cut_program_at = 5;                     /* 순번 384 = 섹터 6 첫 칸 */
     rep_for(384, rep);
     ring_append(&r2, rep, NULL);
     C.dead = false;
     ring_t r3;
-    ring_mount(&r3, &DEV, 0, 4);
+    ring_mount(&r3, &DEV, 0, 8);
     ok("깨진 첫 칸 섹터는 무시 → 다음 순번 384 (다시 지우고 씀)", r3.next_seq == 384);
     const int erases = C.erases;
     rep_for(384, rep);
@@ -170,15 +174,15 @@ static void test_ring_power_cut(void)
     ring_append(&r3, rep, NULL);              /* 지우는 중 끊김 → 쓰기는 못 함 */
     C.dead = false;
     ring_t r4;
-    ring_mount(&r4, &DEV, 0, 4);
+    ring_mount(&r4, &DEV, 0, 8);
     ok("다시 켜면 이어 쓸 순번 512", r4.next_seq == 512);
-    ok("지워진 앞 반(순번 10)은 없음 · 남은 뒤 반(순번 100)은 옛 값 그대로",
-       !read_matches(&r4, 10, 10) && read_matches(&r4, 100, 100));
+    ok("지워진 앞 반(순번 10)은 없음 · 남은 뒤 반(순번 40)은 옛 값 그대로",
+       !read_matches(&r4, 10, 10) && read_matches(&r4, 40, 40));
     rep_for(512, rep);
     ok("512 를 쓰면 섹터를 처음부터 다시 다 지움", ring_append(&r4, rep, &seq) == RING_OK && seq == 512 &&
-                                                         read_matches(&r4, 512, 512) && !read_matches(&r4, 100, 100));
+                                                         read_matches(&r4, 512, 512) && !read_matches(&r4, 40, 40));
     ring_t r5;
-    ring_mount(&r5, &DEV, 0, 4);
+    ring_mount(&r5, &DEV, 0, 8);
     ok("다시 켜면 513", r5.next_seq == 513);
 }
 
@@ -205,8 +209,8 @@ static void test_ring_sent(void)
     ring_rec_t rec;
     ok("표시를 고쳐도 보고 내용 · CRC 그대로", ring_read(&r, 11, &rec) == RING_OK && rec.sent && read_matches(&r, 11, 11));
     ok("두 번 표시해도 OK", ring_mark_sent(&r, 11) == RING_OK);
-    const uint8_t *raw = C.mem + 11 * 32;
-    ok("표시 바이트 FEh · 예비 FFh", raw[28] == 0xFE && raw[29] == 0xFF);
+    const uint8_t *raw = C.mem + 11 * 64;
+    ok("표시 바이트 FEh · 예비 FFh", raw[32] == 0xFE && raw[33] == 0xFF);
     ring_t r2;
     ring_mount(&r2, &DEV, 0, 4);
     ok("다시 켜도 12 가 못 보낸 것으로 남음", ring_find_unsent(&r2, 100, &seq) == RING_OK && seq == 12);

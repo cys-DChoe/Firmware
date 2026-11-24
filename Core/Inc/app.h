@@ -129,6 +129,8 @@ typedef struct {
     bool read_ok;               /* 마지막 센서 읽기가 쓸 만했나 */
     bool baro_held;             /* 마지막 읽기에서 기압을 못 재 마지막 값으로 씀 */
     bool baro_held_min;         /* 이번 분에 그런 때가 있었음 → 보고 비트 BARO_HELD */
+    double sdp_sum, probe_sum;  /* 이번 분 SDP810 차압 · DS18B20 온도 합 (보고 v2 24 · 26 번 = 평균) */
+    uint16_t sdp_n, probe_n;
     bool store_failed;          /* 마지막 1분 기록 · 누적 저장이 실패함 (다음 성공까지) */
     bool tx_failed;             /* 마지막 송신이 실패함 (다음 성공까지) */
     uint32_t next_led_s;

@@ -28,24 +28,24 @@ static void write_vector(FILE *f, const report_t *r)
     }
     report_t d;
     report_decode(b, REPORT_LEN, &d);   /* 잘림 비트가 붙었을 수 있으니 실제 flags 는 풀어 낸 값 */
-    fprintf(f, "|%u|%u|%.6f|%.6f|%.3f|%.4f|%.3f|%.3f|%u|%u\n", r->seq, r->unix_s, r->total_nm3, r->flow_nm3h,
-            r->pg_pa, r->dp_pa, r->t_c, r->patm_pa, r->batt_mv, d.flags);
+    fprintf(f, "|%u|%u|%.6f|%.6f|%.3f|%.4f|%.3f|%.3f|%u|%u|%.4f|%.4f\n", r->seq, r->unix_s, r->total_nm3, r->flow_nm3h,
+            r->pg_pa, r->dp_pa, r->t_c, r->patm_pa, r->batt_mv, d.flags, r->sdp_dp_pa, r->t_probe_c);
 }
 
 int main(int argc, char **argv)
 {
     printf("크기\n");
-    ok("24바이트 (LoRa 한도 32 안)", REPORT_LEN == 24 && REPORT_LEN <= 32);
+    ok("28바이트 (LoRa 한도 32 안) · v1 은 24", REPORT_LEN == 28 && REPORT_LEN <= 32 && REPORT_V1_LEN == 24);
 
     printf("평소 값: 묶고 풀면 눈금 안에서 같음\n");
     report_t r = {
         .seq = 258, .unix_s = 1794816000u, .total_nm3 = 123.4567, .flow_nm3h = 0.372,
         .pg_pa = 300.0, .dp_pa = 32.4, .t_c = 22.0, .patm_pa = 82501.3, .batt_mv = 3912,
-        .flags = REPORT_F_FLOWING,
+        .flags = REPORT_F_FLOWING, .sdp_dp_pa = 31.87, .t_probe_c = 21.4375,
     };
     uint8_t b[REPORT_LEN];
-    ok("길이 24 를 돌려줌", report_encode(&r, b) == REPORT_LEN);
-    ok("첫 바이트 = 형식 버전 1", b[0] == 1);
+    ok("길이 28 을 돌려줌", report_encode(&r, b) == REPORT_LEN);
+    ok("첫 바이트 = 형식 버전 2", b[0] == 2);
     ok("순번 258 = 01 02 (큰 쪽 먼저)", b[1] == 0x01 && b[2] == 0x02);
     report_t d;
     ok("풀기 성공", report_decode(b, REPORT_LEN, &d));
@@ -58,6 +58,37 @@ int main(int argc, char **argv)
     ok("대기압 1 Pa", close(d.patm_pa, 82501.3, 0.5));
     ok("배터리 10 mV", d.batt_mv == 3910 || d.batt_mv == 3920);
     ok("상태 비트 그대로 (잘림 없음)", d.flags == REPORT_F_FLOWING);
+    ok("SDP810 0.02 Pa 눈금 (31.87 → 1594 = 06 3A)", close(d.sdp_dp_pa, 31.87, 0.01) && b[24] == 0x06 && b[25] == 0x3A);
+    ok("DS18B20 0.01 °C 눈금 (21.4375 → 2144 = 08 60)", close(d.t_probe_c, 21.4375, 0.005) && b[26] == 0x08 && b[27] == 0x60);
+
+    printf("SDP810 · DS18B20 이 없으면 0x8000, 잘림 아님\n");
+    {
+        report_t n = r;
+        n.sdp_dp_pa = NAN;
+        n.t_probe_c = NAN;
+        report_encode(&n, b);
+        report_decode(b, REPORT_LEN, &d);
+        ok("24 · 26 번 = 80 00", b[24] == 0x80 && b[25] == 0x00 && b[26] == 0x80 && b[27] == 0x00);
+        ok("풀면 NAN 둘", isnan(d.sdp_dp_pa) && isnan(d.t_probe_c));
+        ok("CLIPPED 안 켜짐", (d.flags & REPORT_F_CLIPPED) == 0);
+        n.sdp_dp_pa = -700.0;               /* SDP810-500Pa 범위(±500)를 넘는 값 */
+        report_encode(&n, b);
+        report_decode(b, REPORT_LEN, &d);
+        ok("SDP810 −700 Pa → −655.34 Pa 로 잘리고(0x8000 은 안 씀) CLIPPED", close(d.sdp_dp_pa, -655.34, 1e-9) &&
+                                                                         (d.flags & REPORT_F_CLIPPED) != 0);
+    }
+
+    printf("옛 v1(24 B) 도 풂 — 두 칸은 없음\n");
+    {
+        report_encode(&r, b);
+        uint8_t v1[REPORT_V1_LEN];
+        memcpy(v1, b, REPORT_V1_LEN);
+        v1[0] = 1;
+        ok("v1 24 B 풀기 성공 · 값 같음 · 두 칸 NAN", report_decode(v1, REPORT_V1_LEN, &d) && d.seq == 258 &&
+                                                        close(d.pg_pa, 300.0, 0.5) && isnan(d.sdp_dp_pa) && isnan(d.t_probe_c));
+        b[0] = 1;
+        ok("버전 1 + 28 B 거부", !report_decode(b, REPORT_LEN, &d));
+    }
 
     printf("누설 크기의 작은 차압도 남음\n");
     r.dp_pa = 0.4;
@@ -95,10 +126,10 @@ int main(int argc, char **argv)
 
     printf("잘못된 입력은 거부\n");
     ok("길이 23 거부", !report_decode(b, 23, &d));
-    uint8_t v2[REPORT_LEN];
-    memcpy(v2, b, REPORT_LEN);
-    v2[0] = 2;
-    ok("모르는 버전 거부", !report_decode(v2, REPORT_LEN, &d));
+    uint8_t v3[REPORT_LEN];
+    report_encode(&r, v3);
+    v3[0] = 3;
+    ok("모르는 버전 거부", !report_decode(v3, REPORT_LEN, &d));
 
     printf("배터리 비트 (3.5 V 경고 · 3.35 V 품질, 오르내림 폭 ±50 mV)\n");
     uint16_t f = 0;
@@ -132,17 +163,17 @@ int main(int argc, char **argv)
     if (argc > 1) {
         FILE *vf = fopen(argv[1], "w");
         if (vf != NULL) {
-            report_t a = {1, 1794816000u, 0.0, 0.0, 0.0, 0.0, 0.0, 101325.0, 4200, 0};
+            report_t a = {1, 1794816000u, 0.0, 0.0, 0.0, 0.0, 0.0, 101325.0, 4200, 0, NAN, NAN};
             write_vector(vf, &a);
             report_t b2 = {258, 1794816060u, 123.4567, 0.372, 300.0, 32.4, 22.0, 82501.3, 3912,
-                           REPORT_F_FLOWING | REPORT_F_LEAK_B};
+                           REPORT_F_FLOWING | REPORT_F_LEAK_B, 31.87, 21.4375};
             write_vector(vf, &b2);
             report_t c = {65535, 4102444800u, 429496.0, 2.5, -120.0, -0.35, -12.4, 50000.0, 3350,
-                          REPORT_F_VENTING | REPORT_F_BATT_WARN | REPORT_F_BATT_QUALITY | REPORT_F_RESENT};
+                          REPORT_F_VENTING | REPORT_F_BATT_WARN | REPORT_F_BATT_QUALITY | REPORT_F_RESENT, -0.42, -12.5};
             write_vector(vf, &c);
             report_t e = {7, 1794816120u, 0.5100, 0.0544, 1960.0, 999.95, 35.5, 115535.0, 5050,
                           REPORT_F_DEPLETED | REPORT_F_OUT_OF_RANGE | REPORT_F_ZERO_UNSET |
-                          REPORT_F_TIME_UNSYNCED | REPORT_F_INCOMPLETE};
+                          REPORT_F_TIME_UNSYNCED | REPORT_F_INCOMPLETE, 499.98, 85.5};
             write_vector(vf, &e);
             const report_counts_t cv[2] = {{0, 0, 0, 0, 0}, {65535, 4000000000u, 70000u, 123456u, 3u}};
             for (int k = 0; k < 2; k++) {

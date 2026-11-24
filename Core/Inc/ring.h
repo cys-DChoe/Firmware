@@ -1,14 +1,17 @@
-/* 1분 기록 링 저장 — 외부 NOR 플래시(W25Q128)에 같은 길이(32 B)로 차례로 씀, 가득 차면 가장 오래된 섹터부터 지움
+/* 1분 기록 링 저장 — 외부 NOR 플래시(W25Q128)에 같은 길이(64 B)로 차례로 씀, 가득 차면 가장 오래된 섹터부터 지움
  *
- * 기록 한 칸 32 B (섹터 4 KB 에 128칸, 페이지 256 B 에 8칸 — 칸이 페이지를 넘지 않음):
- *   0–3   순번 seq (작은 쪽 먼저). 칸 번호와 같음: 주소 = 시작 + (seq mod 칸 수) × 32
- *   4–27  1분 보고 24 B (형식 v1, report.h) — 시각 · 누적 · 유량 · 압력 · 온도 · 배터리 · 상태가 다 들어 있음
- *   28    표시: 비트0 1 = 아직 안 보냄, 0 = 보냄 (지우지 않고 1 → 0 으로만 고침)
- *   29    예비 FFh
- *   30–31 CRC-16/CCITT-FALSE (0–27, 작은 쪽 먼저)
+ * 기록 한 칸 64 B (섹터 4 KB 에 64칸, 페이지 256 B 에 4칸 — 칸이 페이지를 넘지 않음):
+ *   0–3   순번 seq (작은 쪽 먼저). 칸 번호와 같음: 주소 = 시작 + (seq mod 칸 수) × 64
+ *   4–31  1분 보고 28 B (형식 v2, report.h) — 시각 · 누적 · 유량 · 압력 · 온도 · 배터리 · 상태 · SDP810 · DS18B20
+ *   32    표시: 비트0 1 = 아직 안 보냄, 0 = 보냄 (지우지 않고 1 → 0 으로만 고침)
+ *   33    예비 FFh
+ *   34–35 CRC-16/CCITT-FALSE (0–31, 작은 쪽 먼저)
+ *   36–63 비움 FFh (나중 항목용)
+ * 11/24 보고 v2(28 B)로 32 B 칸에 안 들어가 64 B 로 늘림 — 보관 273일 → 136일(요구 90일 이상).
  *
  * 전원이 끊겨도: 쓰다 만 칸은 CRC 가 안 맞아 "없는 기록"으로 보고 건너뜀. 지우다 만 섹터는 다음 쓰기 때 다시 지움.
- * 켤 때 ring_mount() 가 각 섹터 첫 기록만 읽어 마지막 위치를 찾음(3072섹터 × 32 B).
+ * 켤 때 ring_mount() 가 각 섹터 첫 기록만 읽어 마지막 위치를 찾음(3072섹터 × 64 B).
+ * 32 B 칸으로 쓴 옛 기록은 CRC · 순번이 안 맞아 없는 기록으로 봄(보드는 v2 펌웨어로 처음 씀).
  */
 #pragma once
 
@@ -16,11 +19,11 @@
 #include <stdint.h>
 #include "w25q.h"
 
-#define RING_REC_SIZE      32u
-#define RING_REPORT_SIZE   24u
-#define RING_PER_SECTOR    (W25Q_SECTOR / RING_REC_SIZE)   /* 128 */
+#define RING_REC_SIZE      64u
+#define RING_REPORT_SIZE   28u
+#define RING_PER_SECTOR    (W25Q_SECTOR / RING_REC_SIZE)   /* 64 */
 #define RING_DEFAULT_BASE  0u
-#define RING_DEFAULT_SECTORS 3072u    /* 12 MB = 393,216칸 = 273일. 위 4 MB 는 나중 용도(펌웨어 받기 등)로 비워 둠 */
+#define RING_DEFAULT_SECTORS 3072u    /* 12 MB = 196,608칸 = 136일. 위 4 MB 는 나중 용도(펌웨어 받기 등)로 비워 둠 */
 #define RING_90_DAYS       (90u * 1440u)
 
 typedef enum {

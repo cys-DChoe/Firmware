@@ -7,6 +7,8 @@
 #define K_FLOW      1000.0      /* 1 L/h = 0.001 Nm³/h */
 #define K_DP        20.0        /* 0.05 Pa */
 #define K_T         10.0        /* 0.1 °C */
+#define K_SDP       50.0        /* 0.02 Pa */
+#define K_PROBE     100.0       /* 0.01 °C */
 #define PATM_OFS    50000.0
 #define BATT_OFS    2500u
 #define BATT_STEP   10u
@@ -35,6 +37,17 @@ static double fit(double x, double lo, double hi, bool *clip)
     return r;
 }
 
+/* 24 · 26 번 칸: NAN 이면 0x8000(없음), 아니면 ±32767 안으로 (0x8000 은 없음 표시라 피함) */
+static uint16_t opt16(double x, double k, bool *clip)
+{
+    if (isnan(x)) {
+        return REPORT_NONE16;
+    }
+    return (uint16_t)(int16_t)fit(x * k, -32767.0, 32767.0, clip);
+}
+
+static double unopt16(uint16_t v, double k) { return v == REPORT_NONE16 ? NAN : (int16_t)v / k; }
+
 size_t report_encode(const report_t *r, uint8_t out[REPORT_LEN])
 {
     bool clip = false;
@@ -46,6 +59,8 @@ size_t report_encode(const report_t *r, uint8_t out[REPORT_LEN])
     const uint16_t patm = (uint16_t)fit(r->patm_pa - PATM_OFS, 0.0, 65535.0, &clip);
     double b = ((double)r->batt_mv - BATT_OFS) / BATT_STEP;
     const uint8_t batt = (uint8_t)fit(b, 0.0, 255.0, &clip);
+    const uint16_t sdp = opt16(r->sdp_dp_pa, K_SDP, &clip);
+    const uint16_t probe = opt16(r->t_probe_c, K_PROBE, &clip);
 
     uint16_t flags = r->flags;
     if (clip) {
@@ -63,12 +78,16 @@ size_t report_encode(const report_t *r, uint8_t out[REPORT_LEN])
     put16(&out[19], patm);
     out[21] = batt;
     put16(&out[22], flags);
+    put16(&out[24], sdp);
+    put16(&out[26], probe);
     return REPORT_LEN;
 }
 
 bool report_decode(const uint8_t *in, size_t len, report_t *r)
 {
-    if (len != REPORT_LEN || in[0] != REPORT_VERSION) {
+    const bool v2 = (len == REPORT_LEN && in[0] == REPORT_VERSION);
+    const bool v1 = (len == REPORT_V1_LEN && in[0] == 1u);
+    if (!v2 && !v1) {
         return false;
     }
     r->seq = get16(&in[1]);
@@ -81,6 +100,8 @@ bool report_decode(const uint8_t *in, size_t len, report_t *r)
     r->patm_pa = get16(&in[19]) + PATM_OFS;
     r->batt_mv = (uint16_t)(in[21] * BATT_STEP + BATT_OFS);
     r->flags = get16(&in[22]);
+    r->sdp_dp_pa = v2 ? unopt16(get16(&in[24]), K_SDP) : NAN;
+    r->t_probe_c = v2 ? unopt16(get16(&in[26]), K_PROBE) : NAN;
     return true;
 }
 

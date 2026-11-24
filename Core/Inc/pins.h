@@ -36,6 +36,8 @@
 #define I2C2_SCL_PIN     GPIO_PIN_10   /* 69번 · I2C2_SCL — HSC 차압 · 3.3 V */  /* AF4 */
 #define I2C2_SDA_PORT    GPIOB
 #define I2C2_SDA_PIN     GPIO_PIN_12   /* 73번 · I2C2_SDA — HSC 차압 · 3.3 V */  /* AF4 */
+#define TEMP_DQ_PORT     GPIOB
+#define TEMP_DQ_PIN      GPIO_PIN_13   /* 74번 · GPIO 오픈 드레인 — DS18B20 1-Wire(TEMP_DQ → R_TMP 100 Ω → J_TMP 3번) · 3.3 V · 다음 판(PCB3_3)부터, PCB3_2 는 빈 핀 */
 #define ABP2_EOC_PORT    GPIOB
 #define ABP2_EOC_PIN     GPIO_PIN_14   /* 75번 · GPIO 입력 · EXTI14 — ABP2 변환 끝 · 3.3 V */
 #define DBG_TX_PORT      GPIOD

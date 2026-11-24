@@ -9,13 +9,11 @@
  *   DS18B20 온도 1-Wire = D2(PG14)
  *   로그 USART3 PD8/PD9 = ST-LINK 가상 COM 포트(맥 /dev/cu.usbmodem…) 115200
  *
- * 흐름: 켬 → 센서 확인 → 모듈 AT 확인 → 가입(실패면 30 초 뒤 다시) → 1초마다 재기 · 10초마다 로그 → 60초마다 24바이트(report.h 형식 v1) 송신
+ * 흐름: 켬 → 센서 확인 → 모듈 AT 확인 → 가입(실패면 30 초 뒤 다시) → 1초마다 재기 · 10초마다 로그 → 60초마다 28바이트(report.h 형식 v2) 송신
  * 보고 칸: 정압 = ABP2, 평균 차압 = HSC 60초 평균(영점 안 뺌), 가스 온도 = ABP2 온도, 대기압 = BME280.
  *          누적 · 유량 · 시각 · 배터리는 벤치에 없어서 0 (배터리 칸은 범위 밑이라 CLIPPED 표시가 같이 켜짐).
- * 벤치 꼬리 4바이트(형식 v1 24바이트 뒤에 붙임 → 모두 28바이트, 풀기는 bench/nucleo_lora/decode.py):
- *   24  2  SDP810 차압 60초 평균, 0.02 Pa, 부호 있음 (±655 Pa)   없으면 0x8000
- *   26  2  DS18B20 온도, 0.01 °C, 부호 있음                      없으면 0x8000
- * 새 PCB 에는 이 두 센서가 없어서 보드 펌웨어 형식(report.h)은 안 건드림.
+ * 24 · 26 번 칸(SDP810 60초 평균 0.02 Pa · DS18B20 0.01 °C, 없으면 0x8000)은 11/23 벤치 꼬리로 시작해
+ * 11/24 보드 형식 v2(report.h)에 그대로 들어감 — 이제 report_encode 가 같이 묶음. 풀기 tools/report_decode.py.
  * 모듈 대역 · 키 · OTAA 는 모듈에 저장된 값(11/19 맥에서 넣음)을 씀 — 여기선 안 바꿈.
  */
 #include <math.h>
@@ -39,8 +37,6 @@
 #define JOIN_TIMEOUT_MS    30000u
 #define SEND_TIMEOUT_MS    20000u
 #define LORA_BAUD          9600u
-#define BENCH_LEN           (REPORT_LEN + 4u)
-#define BENCH_NONE          ((int16_t)0x8000)
 
 static i2c_stm32_t s_i2c1, s_i2c4;
 static hsc_cfg_t s_hsc_cfg;
@@ -121,18 +117,6 @@ static void print_sample(uint32_t n, const sample_t *s)
            s->ds_ok ? "정상" : "실패", s->ds_t_c);
 }
 
-/* 반올림해서 int16 범위로 (0x8000 은 "없음" 표시라 피함) */
-static int16_t q16(double x)
-{
-    const double r = round(x);
-    if (r > 32767.0) {
-        return 32767;
-    }
-    if (r < -32767.0) {
-        return -32767;
-    }
-    return (int16_t)r;
-}
 
 static bool join_once(void)
 {
@@ -142,15 +126,8 @@ static bool join_once(void)
     return e == WIO_OK;
 }
 
-/* 스택: 링커 스크립트(board/…ld)의 _Min_Stack_Size 가 1 KB 이고 시작 코드가 그걸 MSPLIM(스택 한계)으로 걸어 둠.
- * 소수 printf 한 줄이 1 KB 를 넘겨 HardFault(CFSR STKOF)가 났음(11/23) → 벤치는 한계를 16 KB 로 내림.
- * RAM 640 KB 중 쓰는 건 수 KB 라 힙과 닿지 않음. */
-#define BENCH_STACK_BYTES  0x4000u
-extern uint8_t _estack;
-
 int main(void)
 {
-    __set_MSPLIM((uint32_t)&_estack - BENCH_STACK_BYTES);
     HAL_Init();
     if (log_init() != HAL_OK) {
         Error_Handler();
@@ -248,17 +225,11 @@ int main(void)
             if (dp_n < 54u) {
                 r.flags |= REPORT_F_INCOMPLETE;
             }
-            uint8_t buf[BENCH_LEN];
-            (void)report_encode(&r, buf);
-            /* 벤치 꼬리: SDP810 평균 0.02 Pa · DS18B20 0.01 °C */
             const double sdp_avg = sdp_n > 0u ? sdp_sum / (double)sdp_n : NAN;
-            const int16_t sdp_q = sdp_n > 0u ? q16(sdp_avg * 50.0) : BENCH_NONE;
-            const int16_t ds_q = s.ds_ok ? q16(s.ds_t_c * 100.0) : BENCH_NONE;
-            buf[24] = (uint8_t)((uint16_t)sdp_q >> 8);
-            buf[25] = (uint8_t)sdp_q;
-            buf[26] = (uint8_t)((uint16_t)ds_q >> 8);
-            buf[27] = (uint8_t)ds_q;
-            const size_t len = BENCH_LEN;
+            r.sdp_dp_pa = sdp_avg;                       /* NAN 이면 0x8000 */
+            r.t_probe_c = s.ds_ok ? s.ds_t_c : NAN;
+            uint8_t buf[REPORT_LEN];
+            const size_t len = report_encode(&r, buf);
             printf("[보고] #%u  정압 %.1f Pa · 차압 평균 %.3f Pa (%lu개) · 온도 %.2f C · 대기압 %.1f Pa · SDP810 평균 %.3f Pa (%lu개) · DS18B20 %.2f C\n",
                    (unsigned)seq, r.pg_pa, r.dp_pa, (unsigned long)dp_n, r.t_c, r.patm_pa,
                    sdp_avg, (unsigned long)sdp_n, s.ds_ok ? s.ds_t_c : NAN);

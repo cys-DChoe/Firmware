@@ -16,7 +16,7 @@ cc $CFLAGS -o "$OUT/test_report" Core/Src/report.c tests/host/test_report.c -lm
 python3 tools/report_decode.py --selftest "$OUT/report_vectors.txt"
 
 echo "\n== 센서 드라이버 (HSC · ABP2 · BMP390)"
-cc $CFLAGS -o "$OUT/test_sensors" Core/Src/hsc.c Core/Src/abp2.c Core/Src/bmp390.c Core/Src/sensors.c \
+cc $CFLAGS -o "$OUT/test_sensors" Core/Src/hsc.c Core/Src/abp2.c Core/Src/bmp390.c Core/Src/sdp810.c Core/Src/ds18b20.c Core/Src/sensors.c \
    Core/Src/i2c_timing.c tests/host/test_sensors.c -lm
 "$OUT/test_sensors"
 

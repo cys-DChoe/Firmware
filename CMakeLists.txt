@@ -53,6 +53,9 @@ add_executable(${PROJECT_NAME}.elf
   Core/Src/abp2.c
   Core/Src/bmp390.c
   Core/Src/sensors.c
+  Core/Src/sdp810.c
+  Core/Src/ds18b20.c
+  Core/Src/onewire_stm32.c
   Core/Src/i2c_stm32.c
   Core/Src/i2c_timing.c
   Core/Src/rak3172.c

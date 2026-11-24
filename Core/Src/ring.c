@@ -3,8 +3,11 @@
 
 #define OFF_SEQ    0u
 #define OFF_REP    4u
-#define OFF_FLAG   28u
-#define OFF_CRC    30u
+#define OFF_FLAG   (OFF_REP + RING_REPORT_SIZE)   /* 32 */
+#define OFF_SPARE  (OFF_FLAG + 1u)              /* 33 */
+#define OFF_CRC    (OFF_FLAG + 2u)              /* 34 */
+_Static_assert(OFF_CRC + 2u <= RING_REC_SIZE, "링 칸에 보고가 안 들어감");
+_Static_assert(256u % RING_REC_SIZE == 0u, "칸이 페이지를 넘음");
 #define FLAG_UNSENT 0x01u
 
 uint16_t ring_crc16(const uint8_t *p, uint32_t n)
@@ -110,13 +113,14 @@ ring_err_t ring_mount(ring_t *r, const spi_dev_t *dev, uint32_t base, uint32_t s
 
 static void build(uint8_t *b, uint32_t seq, const uint8_t *rep)
 {
+    memset(b, 0xFF, RING_REC_SIZE);      /* 36–63 은 비움 */
     b[0] = (uint8_t)seq;
     b[1] = (uint8_t)(seq >> 8);
     b[2] = (uint8_t)(seq >> 16);
     b[3] = (uint8_t)(seq >> 24);
     memcpy(b + OFF_REP, rep, RING_REPORT_SIZE);
     b[OFF_FLAG] = 0xFFu;                 /* 안 보냄 */
-    b[29] = 0xFFu;
+    b[OFF_SPARE] = 0xFFu;
     const uint16_t crc = ring_crc16(b, OFF_FLAG);
     b[OFF_CRC] = (uint8_t)crc;
     b[OFF_CRC + 1] = (uint8_t)(crc >> 8);
@@ -128,7 +132,7 @@ ring_err_t ring_append(ring_t *r, const uint8_t report[RING_REPORT_SIZE], uint32
         const uint32_t seq = r->next_seq;
         const uint32_t addr = slot_addr(r, seq);
         if (seq % RING_PER_SECTOR == 0u) {
-            /* 새 섹터 첫 칸: 한 바퀴 전 기록 128개를 지움 */
+            /* 새 섹터 첫 칸: 한 바퀴 전 기록 64개(RING_PER_SECTOR)를 지움 */
             if (w25q_erase_sector(r->dev, addr) != W25Q_OK) {
                 return RING_E_FLASH;
             }

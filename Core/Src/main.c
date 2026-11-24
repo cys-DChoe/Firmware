@@ -17,13 +17,15 @@
 #include "lowpower_stm32.h"
 #include "nv_edata.h"
 #include "nv_w25q.h"
+#include "ds18b20.h"
+#include "onewire_stm32.h"
 #include "sensors.h"
 #include "wdg.h"
 #if __has_include("secrets.h")
 #include "secrets.h"
 #endif
 
-#define FW_VERSION "0.3.0"
+#define FW_VERSION "0.4.0"           /* 11/24: 보고 v2(28 B) · 링 칸 64 B · SDP810 · DS18B20 */
 #define BTN_HOLD_ZERO_MS  3000u      /* 버튼 3초 이상 → 영점 */
 #define BTN_STUCK_MS      10000u     /* 이보다 오래 눌려 있으면 고장으로 보고 그만 봄 (떨어지는 순간에만 깨우므로 다시 안 걸림) */
 
@@ -33,6 +35,7 @@ static HAL_StatusTypeDef lse_start(void);
 
 /* ---------- 부품 ---------- */
 static i2c_stm32_t s_i2c_dp, s_i2c_pg;
+static onewire_t s_ow;               /* DS18B20 (PB13) */
 static sensors_t s_sens;
 static flash_spi_t s_flash;
 static ring_t s_ring;
@@ -218,6 +221,10 @@ int main(void)
     }
     sensors_init(&s_sens, &s_i2c_dp.bus, &s_i2c_pg.bus, sens_power);
     printf("센서 전원: BMP390 %s\n", sensors_power_on(&s_sens) == SENS_OK ? "OK" : "응답 없음");
+    /* 다음 판 센서: SDP810(I2C3 0x25) · DS18B20(PB13). 없는 판이면 보고 24 · 26 번이 0x8000 */
+    onewire_stm32_init(&s_ow);
+    sensors_set_extra(&s_sens, &s_ow, HAL_GetTick, lp_time_ms);
+    printf("DS18B20: %s\n", ds18b20_convert(&s_ow) == SENS_OK ? "있음" : "없음 (PB13 존재 펄스 없음)");
 
     wdg_kick();
 

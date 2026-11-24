@@ -15,5 +15,6 @@ typedef enum {
 HAL_StatusTypeDef lp_init(void);                  /* LSE 켜진 뒤 부름: RTC · Stop 설정 */
 lp_wake_t lp_sleep_ms(uint32_t ms);               /* ms 동안 Stop (최대 32 s), 일찍 깨면 LP_WAKE_OTHER */
 uint32_t lp_time_unix(void);
+uint32_t lp_time_ms(void);                        /* RTC 시각을 ms 로 (32비트라 49일마다 돌아감 — 차이로만 씀, 눈금 약 4 ms) */
 HAL_StatusTypeDef lp_set_time_unix(uint32_t t);   /* LoRa 망 시각 등으로 맞출 때 */
 extern RTC_HandleTypeDef g_rtc;
