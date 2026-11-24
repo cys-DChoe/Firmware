@@ -1,9 +1,9 @@
 # Firmware
 
-가스 계량기(GasMeter_19, PCB3_2) 펌웨어. MCU 는 STM32H563ZGT6.
+가스 계량기(GasMeter_19) 펌웨어. MCU 는 STM32H563ZGT6. 판은 PCB3_2(11/18 주문) · PCB3_3(다음 판) 두 가지 — 공통 코드는 `Core/`, 판마다 다른 것만 `boards/<판>/`.
 
 - 설계서(하는 일 · 정한 것 9가지 · 보드 오면 하는 순서): https://claude.ai/artifact/4pURFGYAHrpZGocGMBt1hs
-- 핀: `Core/Inc/pins.h` (보드 원본에서 뽑은 것, PCB-Sampton/Docs/GasMeter_19_pins.h 와 같음)
+- 핀 · 판 차이: `boards/pcb3_2/` · `boards/pcb3_3/` (아래 "판별 폴더")
 
 ## 지금 들어 있는 것 (0.1.0-firstlight)
 
@@ -138,14 +138,28 @@ cmake -S . -B build.nosync -G Ninja
 cmake --build build.nosync
 ```
 
-빌드 폴더 이름을 `build.nosync` 로 두면 iCloud 가 동기화하지 않음. 결과물은 `build.nosync/gasmeter.elf` · `.hex` · `.bin`.
+빌드 폴더 이름을 `build.nosync` 로 두면 iCloud 가 동기화하지 않음. 한 번에 두 판이 다 나옴: `build.nosync/gasmeter_pcb3_2.elf` · `gasmeter_pcb3_3.elf` (+ `.hex` · `.bin` · `.map`). 한 판만은 `--target gasmeter_pcb3_3.elf`.
+
+## 판별 폴더 (`boards/`)
+
+| 폴더 | 판 | 상태 | 다른 점 |
+|---|---|---|---|
+| `boards/pcb3_2/` | PCB3_2 | 11/18 JLC 주문 · 만드는 중 | 기준 판. PB13 · PA9 빈 핀 |
+| `boards/pcb3_3/` | PCB3_3 | 11/24 거버 · 견적만 | J_SDP(SDP810, I2C3 0x25, 선으로) · J_TMP(DS18B20, PB13) · PA9 → GND |
+
+- `board.h`: 판 이름(`BOARD_NAME`, 켤 때 로그 첫 줄) · 있는 센서(`BOARD_HAS_SDP810` · `BOARD_HAS_DS18B20`) · `BOARD_PA9_GND`. 그 밖은 `pins.h` 를 부름.
+- `pins.h`: MCU 신호 핀. PCB3_3 것은 부품 구성 v0.29 의 U1 핀 넷과 대조해 차이 0.
+- PCB3_2 빌드는 SDP810 주소(0x25)와 PB13 을 아예 안 건드림 → 보고 24 · 26 번은 늘 0x8000. 보고 형식(v2 28 B)은 두 판 같음 — 서버 · ChirpStack 코덱은 하나.
+- 링커 스크립트는 두 판 같음: `boards/STM32H563ZGTX_FLASH.ld`.
+- 새 판이 생기면 `boards/<새 판>/` 에 두 파일을 만들고 CMakeLists.txt 에 `add_gasmeter(<새 판>)` 한 줄.
 
 ## 넣기 (STLINK-V3SET → J_SWD)
 
 케이블 빨간 줄을 J_SWD 의 네모 패드(1번) 쪽으로 꽂음.
 
 ```bash
-./tools/flash.sh
+./tools/flash.sh                                   # PCB3_2 (기본)
+./tools/flash.sh build.nosync/gasmeter_pcb3_3.elf  # PCB3_3
 ```
 
 로그 보기 (Serial Basic → J_DBG, 3.3 V):
@@ -157,4 +171,4 @@ pyserial-miniterm /dev/cu.usbserial-XXXX 115200
 ## 메모리
 
 - 내장 플래시 1 MB 중 은행 1(512 KB, 0x0800_0000~)만 씀. 은행 2 는 나중에 원격 갱신을 넣을 자리로 비워 둠(설계서 9번).
-- 링커 스크립트: `board/STM32H563ZGTX_FLASH.ld` (ST 템플릿에서 FLASH 길이만 512K 로 바꿈)
+- 링커 스크립트: `boards/STM32H563ZGTX_FLASH.ld` (ST 템플릿에서 FLASH 길이만 512K 로 바꿈)

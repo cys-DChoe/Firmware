@@ -82,7 +82,7 @@ void sensors_read(sensors_t *s, sensors_result_t *r)
 
     /* SDP810 측정(45 ms)을 맨 먼저 시작해 두고 다른 센서를 읽는 동안 기다림 */
     const uint32_t sdp_t0 = s->tick_ms != NULL ? s->tick_ms() : 0u;
-    r->e_sdp = sdp810_trigger(s->bus_pg, &s->sdp);
+    r->e_sdp = s->sdp_off ? SENS_E_BUS : sdp810_trigger(s->bus_pg, &s->sdp);
 
     /* 정압 측정을 먼저 시작해 두고(5 ms) 그동안 차압을 읽음 */
     r->e_pg = abp2_start(s->bus_pg);

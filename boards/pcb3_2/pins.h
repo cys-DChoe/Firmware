@@ -1,4 +1,5 @@
-/* GasMeter_19 PCB3_2 — STM32H563ZGT6 신호 핀 (tools/bom/pin_table.py 가 보드에서 뽑음, 2026-11-16) */
+/* GasMeter_19 PCB3_2 — STM32H563ZGT6 신호 핀 (tools/bom/pin_table.py 가 보드에서 뽑음, 2026-11-16)
+ * 11/24 JLC 로 만드는 중인 판. PB13 · PA9 는 빈 핀 — 다음 판은 boards/pcb3_3/pins.h */
 /* LTE UART · DTR · RI · STATUS 핀은 VDDIO2 = 1.8 V (모듈 VDD_EXT). PWRKEY · RST 는 3.3 V → NPN. */
 /* 켜고 끄는 순서 · 전압 조건(셀 3.6 V · DTR/RI 3.2 s · VDDIO2 순서 · LoRa RUI3 AT 등)은 Docs/GasMeter_19_펌웨어_주의.html */
 #pragma once
@@ -17,7 +18,7 @@
 #define LED1_PIN         GPIO_PIN_3   /* 13번 · GPIO 출력 — LED1 · 3.3 V */
 #define LED2_PORT        GPIOF
 #define LED2_PIN         GPIO_PIN_4   /* 14번 · GPIO 출력 — LED2 · 3.3 V */
-/* 색 (JLC 부품 위치 파일 PCB3_2): D_LED1 = 빨강 LTST-C190KRKT · 1 kΩ(≈1.4 mA), D_LED2 = 초록 LTST-C190KGKT · 470 Ω(≈2.8 mA) */
+/* 색 (JLC 부품 위치 파일 PCB3_2): D_LED1 = 빨강 KT-0603R(C2286, JLC BOM) · 1 kΩ(≈1.4 mA), D_LED2 = 초록 LTST-C190KGKT · 470 Ω(≈2.8 mA) */
 #define LED_RED_PORT     LED1_PORT
 #define LED_RED_PIN      LED1_PIN
 #define LED_GREEN_PORT   LED2_PORT
@@ -37,7 +38,7 @@
 #define I2C2_SDA_PORT    GPIOB
 #define I2C2_SDA_PIN     GPIO_PIN_12   /* 73번 · I2C2_SDA — HSC 차압 · 3.3 V */  /* AF4 */
 #define TEMP_DQ_PORT     GPIOB
-#define TEMP_DQ_PIN      GPIO_PIN_13   /* 74번 · GPIO 오픈 드레인 — DS18B20 1-Wire(TEMP_DQ → R_TMP 100 Ω → J_TMP 3번) · 3.3 V · 다음 판(PCB3_3)부터, PCB3_2 는 빈 핀 */
+#define TEMP_DQ_PIN      GPIO_PIN_13   /* 74번 · GPIO 오픈 드레인 — DS18B20 1-Wire(TEMP_DQ → R_TMP 100 Ω → J_TMP 3번) · PCB3_2 에선 빈 핀 — 이 판 빌드는 안 건드림(board.h BOARD_HAS_DS18B20 0), onewire_stm32.c 컴파일용으로만 둠 */
 #define ABP2_EOC_PORT    GPIOB
 #define ABP2_EOC_PIN     GPIO_PIN_14   /* 75번 · GPIO 입력 · EXTI14 — ABP2 변환 끝 · 3.3 V */
 #define DBG_TX_PORT      GPIOD

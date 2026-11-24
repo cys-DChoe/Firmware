@@ -192,7 +192,7 @@ int main(void)
     /* USB-C '죽은 배터리' 풀다운 끄기 — PB13(TEMP_DQ) · PB14(ABP2_EOC)는 UCPD1_CC1 · CC2 겸용(FT_c)이라
      * 리셋 뒤엔 짝 핀 PA9(DB1, 빈 핀) · PC9(DB2 = I2C3_SDA, 평소 높음)에 따라 5.1 kΩ 풀다운이 걸릴 수 있음
      * (DS14258 핀 표 · HAL 주석 "모든 경우에 끌 것" · ST 사례: PC9 높이자 PB14 3.3 → 1.5 V). UCPD 는 안 씀 (11/24 검수 점1)
-     * PCB3_3 부터 PA9 는 판에서 GND 에 묶임 — PA9 를 출력으로 쓰지 말 것(높이면 단락) */
+     * PCB3_3 부터 PA9 는 판에서 GND 에 묶임(board.h BOARD_PA9_GND) — PA9 를 출력으로 쓰지 말 것(높이면 단락) */
     HAL_PWREx_DisableUCPDDeadBattery();
     mpu_init();                /* 캐시를 켜기 전에: 공장 보정값 · EDATA 는 캐시 안 함 */
     HAL_ICACHE_Enable();
@@ -203,7 +203,7 @@ int main(void)
     if (log_init() != HAL_OK) {
         Error_Handler();
     }
-    printf("\n== gasmeter %s ==\n", FW_VERSION);
+    printf("\n== gasmeter %s · %s ==\n", FW_VERSION, BOARD_NAME);
     printf("SYSCLK %lu Hz\n", (unsigned long)HAL_RCC_GetSysClockFreq());
     printf("켠 까닭: %s", wdg_cause_name(boot.cause));
     if (boot.cause == WDG_CAUSE_FAULT) {
@@ -226,7 +226,9 @@ int main(void)
     }
     sensors_init(&s_sens, &s_i2c_dp.bus, &s_i2c_pg.bus, sens_power);
     printf("센서 전원: BMP390 %s\n", sensors_power_on(&s_sens) == SENS_OK ? "OK" : "응답 없음");
-    /* 다음 판 센서: SDP810(I2C3 0x25) · DS18B20(PB13). 없는 판이면 보고 24 · 26 번이 0x8000 */
+    /* PCB3_3 센서: SDP810(I2C3 0x25) · DS18B20(PB13) — 판에 자리가 없으면(board.h) 안 건드림, 보고 24 · 26 번은 0x8000 */
+    s_sens.sdp_off = !BOARD_HAS_SDP810;
+#if BOARD_HAS_DS18B20
     onewire_stm32_init(&s_ow);
     sensors_set_extra(&s_sens, &s_ow, HAL_GetTick, lp_time_ms);
     if (!onewire_stm32_timer_ok()) {
@@ -234,6 +236,12 @@ int main(void)
     } else {
         printf("DS18B20: %s\n", ds18b20_convert(&s_ow) == SENS_OK ? "있음" : "없음 (PB13 존재 펄스 없음)");
     }
+#else
+    (void)s_ow;
+    sensors_set_extra(&s_sens, NULL, HAL_GetTick, lp_time_ms);
+#endif
+    printf("판 %s: SDP810 %s · DS18B20 %s\n", BOARD_NAME, BOARD_HAS_SDP810 ? "찾아봄" : "자리 없음",
+           BOARD_HAS_DS18B20 ? "찾아봄" : "자리 없음");
 
     wdg_kick();
 

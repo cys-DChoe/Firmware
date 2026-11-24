@@ -682,6 +682,16 @@ static void test_next_board_sensors(void)
     sensors_read(&s, &r);
     ok("값 OK · 이른 읽기 0 · DS18B20 안 씀", r.e_sdp == SENS_OK && x.sdp_early_reads == 0 && r.e_probe == SENS_E_BUS);
     ok("기다림 ≥ 50 ms", f->delay_total - d0 >= 50u);
+
+    printf("SDP810 헤더 없는 판(PCB3_2 빌드, sdp_off)\n");
+    s.sdp_off = true;
+    const int tr2 = x.sdp_traffic;
+    pg_ok = true;
+    for (unsigned k = 0; k < 2u * SDP810_RETRY_READS + 2u; k++) {
+        sensors_read(&s, &r);
+        pg_ok = pg_ok && r.e_pg == SENS_OK && r.e_baro == SENS_OK && r.e_sdp == SENS_E_BUS && !r.sample.dp2_ok;
+    }
+    ok("0x25 를 한 번도 안 건드림 · 차압 2 없음 · ABP2 · BMP390 그대로", x.sdp_traffic == tr2 && pg_ok);
 }
 
 static void test_i2c_timing(void)

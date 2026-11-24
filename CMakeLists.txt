@@ -45,7 +45,12 @@ set(HAL_SOURCES
   ${HAL}/Src/stm32h5xx_hal_uart_ex.c
 )
 
-add_executable(${PROJECT_NAME}.elf
+# ---------- 보드 펌웨어: 판마다 따로 (boards/<판>/board.h · pins.h) ----------
+# 공통 코드(Core/)는 하나, 판마다 다른 것(핀 · 있는 센서)만 boards/ 폴더에 둠.
+#   gasmeter_pcb3_2.elf — 11/18 주문한 판 (기본, 보드 오면 이것부터)
+#   gasmeter_pcb3_3.elf — 다음 판 (SDP810 · DS18B20 헤더, PA9 GND)
+# 한 판만: cmake --build build.nosync --target gasmeter_pcb3_3.elf
+set(GASMETER_SOURCES
   Core/Src/main.c
   Core/Src/meter.c
   Core/Src/report.c
@@ -83,42 +88,50 @@ add_executable(${PROJECT_NAME}.elf
   ${DEV}/Source/Templates/gcc/startup_stm32h563xx.s
   ${HAL_SOURCES}
 )
-
-target_compile_definitions(${PROJECT_NAME}.elf PRIVATE STM32H563xx USE_HAL_DRIVER)
 option(LTE_TEST_AT_BOOT "켤 때 LTE 시험을 한 번 함 (벤치용)" OFF)
-if(LTE_TEST_AT_BOOT)
-  target_compile_definitions(${PROJECT_NAME}.elf PRIVATE LTE_TEST_AT_BOOT)
-endif()
 set(BATT_CAL_ACTUAL_MV 0 CACHE STRING "셀 보정: 멀티미터로 잰 셀 전압 mV (0 = 안 함, 벤치용 — 끝나면 0 으로)")
-if(BATT_CAL_ACTUAL_MV GREATER 0)
-  target_compile_definitions(${PROJECT_NAME}.elf PRIVATE BATT_CAL_ACTUAL_MV=${BATT_CAL_ACTUAL_MV})
-endif()
-target_include_directories(${PROJECT_NAME}.elf PRIVATE
-  Core/Inc
-  ${DEV}/Include
-  ${HAL}/Inc
-  ${TP}/cmsis_core/Include
-)
-target_compile_options(${PROJECT_NAME}.elf PRIVATE
-  $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Wno-unused-parameter>
-  $<$<CONFIG:Debug>:-Og -g3>
-  $<$<CONFIG:Release>:-Os -g>
-)
-target_link_libraries(${PROJECT_NAME}.elf PRIVATE m)
-set(LDSCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/board/STM32H563ZGTX_FLASH.ld)
-target_link_options(${PROJECT_NAME}.elf PRIVATE
-  -T${LDSCRIPT}
-  -Wl,-Map=${PROJECT_NAME}.map,--cref
-  -Wl,--print-memory-usage
-  -u _printf_float          # 로그에 누적량 · 영점 소수 찍기 (newlib-nano 는 기본으로 빠져 있음)
-)
-set_target_properties(${PROJECT_NAME}.elf PROPERTIES LINK_DEPENDS ${LDSCRIPT})
+set(LDSCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/boards/STM32H563ZGTX_FLASH.ld)   # 두 판 같은 MCU · 같은 링커 스크립트
 
-add_custom_command(TARGET ${PROJECT_NAME}.elf POST_BUILD
-  COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:${PROJECT_NAME}.elf> ${PROJECT_NAME}.hex
-  COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${PROJECT_NAME}.elf> ${PROJECT_NAME}.bin
-  COMMAND ${CMAKE_SIZE} $<TARGET_FILE:${PROJECT_NAME}.elf>
-)
+function(add_gasmeter BOARD)
+  set(T gasmeter_${BOARD}.elf)
+  set(B gasmeter_${BOARD})
+  add_executable(${T} ${GASMETER_SOURCES})
+  target_compile_definitions(${T} PRIVATE STM32H563xx USE_HAL_DRIVER)
+  if(LTE_TEST_AT_BOOT)
+    target_compile_definitions(${T} PRIVATE LTE_TEST_AT_BOOT)
+  endif()
+  if(BATT_CAL_ACTUAL_MV GREATER 0)
+    target_compile_definitions(${T} PRIVATE BATT_CAL_ACTUAL_MV=${BATT_CAL_ACTUAL_MV})
+  endif()
+  target_include_directories(${T} PRIVATE
+    boards/${BOARD}
+    Core/Inc
+    ${DEV}/Include
+    ${HAL}/Inc
+    ${TP}/cmsis_core/Include
+  )
+  target_compile_options(${T} PRIVATE
+    $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Wno-unused-parameter>
+    $<$<CONFIG:Debug>:-Og -g3>
+    $<$<CONFIG:Release>:-Os -g>
+  )
+  target_link_libraries(${T} PRIVATE m)
+  target_link_options(${T} PRIVATE
+    -T${LDSCRIPT}
+    -Wl,-Map=${B}.map,--cref
+    -Wl,--print-memory-usage
+    -u _printf_float          # 로그에 누적량 · 영점 소수 찍기 (newlib-nano 는 기본으로 빠져 있음)
+  )
+  set_target_properties(${T} PROPERTIES LINK_DEPENDS ${LDSCRIPT})
+  add_custom_command(TARGET ${T} POST_BUILD
+    COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:${T}> ${B}.hex
+    COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${T}> ${B}.bin
+    COMMAND ${CMAKE_SIZE} $<TARGET_FILE:${T}>
+  )
+endfunction()
+
+add_gasmeter(pcb3_2)
+add_gasmeter(pcb3_3)
 
 # ---------- Nucleo-H563ZI 브레드보드 LoRa 벤치 (bench/nucleo_lora/main.c) ----------
 # 보드 펌웨어와 따로 만듦: cmake --build build.nosync --target bench_lora.elf
@@ -147,6 +160,7 @@ add_executable(bench_lora.elf EXCLUDE_FROM_ALL
 target_compile_definitions(bench_lora.elf PRIVATE STM32H563xx USE_HAL_DRIVER)
 target_include_directories(bench_lora.elf PRIVATE
   ${BENCH}
+  boards/pcb3_2               # stm32h5xx_hal_msp.c 의 로그 · LoRa 핀(Nucleo 와 같은 자리)
   Core/Inc
   ${DEV}/Include
   ${HAL}/Inc

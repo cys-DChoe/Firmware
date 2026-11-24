@@ -40,6 +40,7 @@ typedef struct {
     double patm_fallback_pa;        /* 기압 센서 실패 때 쓸 값 (마지막 정상값, 처음엔 해수면 101,325 Pa) */
     /* 다음 판 센서 */
     sdp810_t sdp;
+    bool sdp_off;                   /* true = SDP810 헤더 없는 판(board.h BOARD_HAS_SDP810 0) → 0x25 를 아예 안 건드림 */
     const onewire_t *ow;            /* NULL 이면 DS18B20 안 씀 */
     uint32_t (*tick_ms)(void);      /* 깨어 있을 때 ms (SDP810 50 ms 채우기). NULL 이면 50 ms 를 다 기다림 */
     uint32_t (*wall_ms)(void);      /* 잠 동안에도 흐르는 ms (DS18B20 간격 · 나이). NULL 이면 DS18B20 안 씀 */
