@@ -38,6 +38,9 @@
  *   이 값 근처에서 정압이 10분 평평하고 유량이 0 인 분을 '방출'로 셈 (11/18) */
 #define APP_CFG_VENT_P       0x03u
 #define APP_VENT_P_MIN_PA    100u
+/*   04 vv : SDP810 끄기 · 켜기 (vv 00 = 끔, 01 = 켬). PCB3_3 비교 시험이 끝나면 꺼서 전류를 아낌(설계서 판 구분 3번, 11/24).
+ *   받으면 바로 적용 · 저장, 같은 값이면 다시 저장 안 함. 판에 SDP810 자리가 없으면(PCB3_2) 저장만 하고 늘 꺼진 그대로 */
+#define APP_CFG_SDP          0x04u
 /* LTE 1차 (설계서 5번): 켜고 · 망 등록 확인 · 끄기만. 셀 3.6 V 미만이면 안 함(펌웨어 주의 1절, 0.05 V 여유 → 3.65 V).
  * 결과는 LoRa 포트 2 로 7 바이트 (lte_result_encode) — 1분 보고 링에는 안 넣음 */
 #define APP_LTE_PORT         2u
@@ -103,6 +106,7 @@ typedef struct {
     void (*set_pg_fs)(void *ctx, double pa);        /* 정압 센서 만점 바꾸기 (없으면 NULL) */
     void (*power_save)(void *ctx, bool off);        /* 셀 낮아 쉼: 센서 · LED 끄기 / 켜기 (없으면 NULL) */
     void (*led)(void *ctx, bool red, uint8_t blinks); /* 짧게 깜빡 (없으면 NULL) */
+    void (*set_sdp)(void *ctx, bool on);            /* SDP810 켜기 · 끄기 (없으면 NULL) */
 } app_hw_t;
 
 typedef struct {
@@ -130,6 +134,7 @@ typedef struct {
     bool baro_held;             /* 마지막 읽기에서 기압을 못 재 마지막 값으로 씀 */
     bool baro_held_min;         /* 이번 분에 그런 때가 있었음 → 보고 비트 BARO_HELD */
     double sdp_sum, probe_sum;  /* 이번 분 SDP810 차압 · DS18B20 온도 합 (보고 v2 24 · 26 번 = 평균) */
+    uint32_t zero_hits_said;    /* 영점 따라가기 한도 닿음을 로그로 알린 횟수 (meter.zero_limit_hits 와 비교) */
     uint16_t sdp_n, probe_n;
     bool store_failed;          /* 마지막 1분 기록 · 누적 저장이 실패함 (다음 성공까지) */
     bool tx_failed;             /* 마지막 송신이 실패함 (다음 성공까지) */

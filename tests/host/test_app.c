@@ -28,6 +28,8 @@ typedef struct {
     bool sensors_ok;
     double pg_fs;               /* 앱이 알려 준 정압 센서 만점 */
     bool saving;                /* 셀이 낮아 쉬는 중 (센서 · LED 끔) */
+    bool sdp_on;                /* 앱이 알려 준 SDP810 켜짐 (설정 04) */
+    int sdp_calls;
     int save_calls;
     int led_green, led_red1, led_red2, led_red3;   /* LED 깜빡임 횟수 (초록 1번 · 빨강 1 · 2 · 3번) */
     bool time_ok;
@@ -35,7 +37,7 @@ typedef struct {
     int flash_on_calls;
     char last_log[96];
     int minute_logs;            /* "1분 #" 로 시작하는 로그 수 */
-    char minute_log[320];
+    char minute_log[352];
 } board_t;
 
 static board_t B;
@@ -98,8 +100,14 @@ static void b_led(void *ctx, bool red, uint8_t blinks)
         b->led_red3++;
     }
 }
+static void b_set_sdp(void *ctx, bool on)
+{
+    board_t *b = ctx;
+    b->sdp_on = on;
+    b->sdp_calls++;
+}
 static void led_zero(void) { B.led_green = B.led_red1 = B.led_red2 = B.led_red3 = 0; }
-static const app_hw_t HW = {b_read, b_now, b_time, b_batt, b_flash, b_log, &B, b_set_time, b_set_pg_fs, b_power_save, b_led};
+static const app_hw_t HW = {b_read, b_now, b_time, b_batt, b_flash, b_log, &B, b_set_time, b_set_pg_fs, b_power_save, b_led, b_set_sdp};
 
 static fake_lte_t FL;
 static lte_t LT;
@@ -217,7 +225,8 @@ int main(void)
     F.joined = true;
     /* 모듈이 보낼 때마다 송신 끝을 알려 주는 가짜: 한 번 돌 때마다 TX_DONE 하나 */
     const uint32_t until = B.now + 400u;
-    while (B.now < until) {
+    /* 끝에 막 보내기 시작한 기록이 있으면 송신 끝까지 (11/24: 0.8 Pa 치우침이 C(Re) 로는 조리로 안 잡혀 10 s 간격이 됨) */
+    while (B.now < until || (R.tx_pending && B.now < until + 60u)) {
         const uint32_t ms = app_step(&A);
         if (R.tx_pending) {
             push(&F, "+EVT:TX_DONE\r\n");
@@ -778,10 +787,11 @@ int main(void)
             run_ack(60);
             const size_t L = strlen(B.minute_log);
             const char *bits = strstr(B.minute_log, "비트 ");
-            ok("값이 다 커도 줄 끝(SDP810 · DS18B20 두 칸)까지 안 잘림",
+            ok("값이 다 커도 줄 끝(SDP810 · DS18B20 · 영점 칸)까지 안 잘림",
                L > 8u && strstr(B.minute_log, "#54321") != NULL && strstr(B.minute_log, "누적 1234.") != NULL &&
                    bits != NULL && strspn(bits + strlen("비트 "), "0123456789ABCDEF") == 4u &&
-                   strstr(B.minute_log, " · SDP810 ") != NULL && strcmp(B.minute_log + L - 2, " C") == 0);
+                   strstr(B.minute_log, " · SDP810 ") != NULL && strstr(B.minute_log, " · DS18B20 ") != NULL &&
+                   strcmp(B.minute_log + L - 3, " Pa") == 0 && strstr(B.minute_log, " · 영점 ") != NULL);
             A.counter.report_seq = keep;
             A.meter.total_nm3 = keep_tot;
             idle_gas();
@@ -816,6 +826,46 @@ int main(void)
         ok("아직 안 넣었으면 한 번 맞춤", app_batt_cal_once(&A, 3610) && A.settings.batt_cal_mv == 10 &&
                                             A.settings.batt_cal_set);
         ok("되돌리기", app_batt_cal(&A, 3600) && A.settings.batt_cal_mv == 0);
+    }
+
+    printf("영점 따라가기 한도에 닿으면 로그 (검수 7번)\n");
+    {
+        idle_gas();
+        meter_set_zero(&A.meter, 0.0);
+        B.s.dp2_ok = true;
+        B.s.dp2_pa = 0.0;                          /* SDP810 관이 빠져 0 */
+        for (int k = 1; k <= 18; k++) {            /* 3시간에 걸쳐 HSC 0 → 2 Pa (매 순간은 조리 문턱 아래) */
+            B.s.dp_raw_pa = 2.0 * k / 18.0;
+            run_ack(10 * 60);
+        }
+        ok("영점은 +1 Pa 에서 멈춤 · 앱이 알림 (알린 횟수 = 닿은 횟수)",
+           fabs(A.meter.zero_pa - 1.0) < 1e-9 && A.meter.zero_limit_hits > 0u &&
+               A.zero_hits_said == A.meter.zero_limit_hits);
+        B.s.dp2_ok = false;
+        idle_gas();
+        meter_set_zero(&A.meter, A.settings.zero_pa);
+    }
+
+    printf("SDP810 끄기 · 켜기 (설정 04, 11/24)\n");
+    {
+        ok("처음 켤 때 앱이 켬으로 알려 줌", B.sdp_on && !A.settings.sdp_off);
+        const uint8_t bad[2] = {APP_CFG_SDP, 0x02};
+        const uint8_t bad_len[1] = {APP_CFG_SDP};
+        ok("02 · 길이 틀림은 무시", !app_downlink(&A, APP_CFG_PORT, bad, 2) && !app_downlink(&A, APP_CFG_PORT, bad_len, 1) &&
+                                     B.sdp_on);
+        const uint8_t off[2] = {APP_CFG_SDP, 0x00};
+        uint32_t saves = NS.next_seq;
+        ok("04 00 → 끔 · 저장", app_downlink(&A, APP_CFG_PORT, off, 2) && !B.sdp_on && A.settings.sdp_off &&
+                                  NS.next_seq == saves + 1u);
+        saves = NS.next_seq;
+        ok("같은 값을 또 받으면 다시 저장하지 않음", app_downlink(&A, APP_CFG_PORT, off, 2) && NS.next_seq == saves);
+        B.sdp_on = true;
+        boot();
+        ok("다시 켜도 꺼진 그대로", !B.sdp_on && A.settings.sdp_off);
+        const uint8_t on[2] = {APP_CFG_SDP, 0x01};
+        ok("04 01 → 켬", app_downlink(&A, APP_CFG_PORT, on, 2) && B.sdp_on && !A.settings.sdp_off);
+        boot();
+        ok("다시 켜면 켜진 그대로 · 다른 설정(정압 만점) 그대로", B.sdp_on && B.pg_fs == (double)app_pg_fs_pa(&A));
     }
 
     printf("방출 기준(물트랩 압력)을 설정 명령으로 넣기\n");

@@ -130,6 +130,13 @@ static void hw_power_save(void *ctx, bool off)
     }
 }
 
+/* SDP810 켜기 · 끄기 (설정 04) — 판에 J_SDP 가 없으면(board.h) 늘 끔. 끄면 다음 읽기부터 0x25 를 안 건드림(센서는 마지막 읽기 뒤 잠 1 µA) */
+static void hw_set_sdp(void *ctx, bool on)
+{
+    (void)ctx;
+    s_sens.sdp_off = !(on && BOARD_HAS_SDP810);
+}
+
 /* LED 짧게 깜빡: 30 ms 켬 · 150 ms 쉼 (깨어 있을 때라 HAL_Delay 가 됨). 빨강 = 문제, 초록 = 정상 */
 static void hw_led(void *ctx, bool red, uint8_t blinks)
 {
@@ -147,7 +154,7 @@ static void hw_led(void *ctx, bool red, uint8_t blinks)
 }
 
 static const app_hw_t HW = {hw_read,   hw_now, hw_time_valid, hw_batt,     hw_flash, hw_log, NULL,
-                            hw_set_time, hw_set_pg_fs, hw_power_save, hw_led};
+                            hw_set_time, hw_set_pg_fs, hw_power_save, hw_led, hw_set_sdp};
 
 /* 버튼을 누르고 있는 동안 기다려 3초 넘으면 영점 */
 static void button_check(void)
@@ -240,8 +247,9 @@ int main(void)
     (void)s_ow;
     sensors_set_extra(&s_sens, NULL, HAL_GetTick, lp_time_ms);
 #endif
-    printf("판 %s: SDP810 %s · DS18B20 %s\n", BOARD_NAME, BOARD_HAS_SDP810 ? "찾아봄" : "자리 없음",
-           BOARD_HAS_DS18B20 ? "찾아봄" : "자리 없음");
+    /* 판에 자리가 있는지만 — SDP810 을 설정(04 00)으로 꺼 두었으면 app_init 이 따로 로그 */
+    printf("판 %s: SDP810 %s · DS18B20 %s\n", BOARD_NAME, BOARD_HAS_SDP810 ? "자리 있음" : "자리 없음",
+           BOARD_HAS_DS18B20 ? "자리 있음" : "자리 없음");
 
     wdg_kick();
 

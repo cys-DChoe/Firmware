@@ -23,6 +23,7 @@ typedef struct {
     uint8_t dev_eui[8], app_eui[8], app_key[16];
     int16_t batt_cal_mv;     /* 셀 전압 1점 보정값 (생산 때 실제 전압 − 잰 값) */
     uint16_t pg_fs_pa;       /* 정압 센서 만점 Pa — 0 = 기본(ABP2 006KG, 6000). 2.5 kPa 품번으로 바꾸면 2500 (11/17) */
+    bool sdp_off;            /* SDP810 끔 (설정 04 00, 11/24) — 기본 0 = 켬. 저장 칸이 54 B 꽉 차서 17번 플래그 바이트의 비트 3 */
 } settings_t;
 
 typedef struct {

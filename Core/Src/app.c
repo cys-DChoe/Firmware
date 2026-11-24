@@ -49,6 +49,12 @@ void app_init(app_t *a, const app_hw_t *hw, ring_t *ring, nvlog_t *nv_set, nvlog
     if (a->hw.set_pg_fs != NULL) {
         a->hw.set_pg_fs(a->hw.ctx, (double)app_pg_fs_pa(a));   /* 센서 쪽 환산 · 자르기 범위도 같이 */
     }
+    if (a->hw.set_sdp != NULL) {
+        a->hw.set_sdp(a->hw.ctx, !a->settings.sdp_off);
+    }
+    if (a->settings.sdp_off) {
+        say(a, "SDP810: 설정으로 꺼 둠 (04 01 로 켬)");
+    }
     if (a->settings.zero_set) {
         meter_set_zero(&a->meter, a->settings.zero_pa);
     }
@@ -153,6 +159,27 @@ bool app_downlink(app_t *a, uint8_t port, const uint8_t *d, uint8_t len)
         flash_on(a, false);
         a->meter.cfg.vent_p_pa = app_vent_p_pa(a);
         say(a, ok ? "설정: 방출 기준 바꿈" : "설정: 방출 기준 바꿈 (저장 실패 — 다시 켜면 옛 값)");
+        return true;
+    }
+    if (d[0] == APP_CFG_SDP && len == 2u) {
+        if (d[1] > 1u) {
+            say(a, "설정: SDP810 값은 00 · 01 만 — 무시");
+            return false;
+        }
+        const bool off = d[1] == 0u;
+        if (off == a->settings.sdp_off) {
+            say(a, "설정: SDP810 같은 값 — 그대로");
+            return true;
+        }
+        a->settings.sdp_off = off;
+        flash_on(a, true);
+        const bool ok = settings_save(a->nv_set, &a->settings) == NVLOG_OK;
+        flash_on(a, false);
+        if (a->hw.set_sdp != NULL) {
+            a->hw.set_sdp(a->hw.ctx, !off);
+        }
+        say(a, ok ? (off ? "설정: SDP810 끔" : "설정: SDP810 켬")
+                  : (off ? "설정: SDP810 끔 (저장 실패 — 다시 켜면 옛 값)" : "설정: SDP810 켬 (저장 실패 — 다시 켜면 옛 값)"));
         return true;
     }
     if (d[0] == APP_CFG_LTE_TEST && len == 1u) {
@@ -352,12 +379,16 @@ static void do_minute(app_t *a, uint32_t now)
     build_report(a, &mm, now, &r);
     {
         /* 보드에서 값을 바로 보게 1분마다 한 줄 (보드 오면 2 · 4 · 7단계) */
-        char m[288];                    /* 보통 200 B, 값이 다 커도 240 B 안 (11/24 SDP810 · DS18B20 두 칸 더함) */
+        char m[320];                    /* 보통 220 B, 값이 다 커도 270 B 안 (11/24 SDP810 · DS18B20 · 영점 칸 더함) */
         snprintf(m, sizeof(m),
-                 "1분 #%u: 차압 %.2f Pa · 정압 %.0f Pa · 기압 %.0f Pa · 온도 %.1f C · 셀 %u mV · 유량 %.3f Nm3/h · 누적 %.4f Nm3 · 비트 %04X · SDP810 %.2f Pa · DS18B20 %.2f C",
+                 "1분 #%u: 차압 %.2f Pa · 정압 %.0f Pa · 기압 %.0f Pa · 온도 %.1f C · 셀 %u mV · 유량 %.3f Nm3/h · 누적 %.4f Nm3 · 비트 %04X · SDP810 %.2f Pa · DS18B20 %.2f C · 영점 %.2f Pa",
                  (unsigned)r.seq, r.dp_pa, r.pg_pa, r.patm_pa, r.t_c, (unsigned)r.batt_mv, r.flow_nm3h, r.total_nm3,
-                 (unsigned)r.flags, r.sdp_dp_pa, r.t_probe_c);
+                 (unsigned)r.flags, r.sdp_dp_pa, r.t_probe_c, a->meter.zero_pa);
         say(a, m);
+    }
+    if (a->meter.zero_limit_hits != a->zero_hits_said) {
+        a->zero_hits_said = a->meter.zero_limit_hits;
+        say(a, "영점 따라가기: 버튼 영점 ±1 Pa 한도에 닿음 — SDP810 관이 빠졌거나 센서 한쪽 이상, 관 확인");
     }
     uint8_t bytes[REPORT_LEN];
     report_encode(&r, bytes);

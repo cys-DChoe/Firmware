@@ -16,13 +16,20 @@
 #define METER_P_STD_PA      101325.0   /* 표준 기압 */
 #define METER_T_STD_K       273.15     /* 0 °C */
 #define METER_R_J_MOL_K     8.314      /* 기체상수 */
+#define METER_C_MIN         0.5        /* C(Re) 가 이 밖이면 고정 C 로 (벤치 venturi.py 와 같은 범위) */
+#define METER_C_MAX         1.05
 
 typedef struct {
-    /* 벤투리 (설계서 2번: 설정값, 지금은 계산식 문서 예제 값) */
+    /* 벤투리 (설계서 2번: 설정값). 11/24 부터 벤치 실물 벤투리(목 4 · 입구 16 mm) + 11/20 계량기 비교 시험 C(Re) 식
+     * — 벤치 서버 venturi.py · 실시간 페이지 교정 표와 같은 식. 계산식 문서 예제(4.62 · 25 mm · C 0.97 고정)는 맥 시험에서만 */
     double throat_d_m;          /* 목 지름 dₜ */
     double inlet_d_m;           /* 입구 지름 D */
-    double discharge_c;         /* 유출계수 C (보통 유량) */
-    double discharge_c_low;     /* 저유량용 C (누설 B 유량 계산) */
+    double discharge_c;         /* 유출계수 C — c_re_a 가 0 이면 이 고정값, 아니면 Re 를 잡는 기준 유량 Q₀ 계산에만 씀(0.97) */
+    double discharge_c_low;     /* 저유량용 C (누설 B 유량 계산) — c_re_a 가 0 일 때만 씀 */
+    double c_re_a, c_re_b;      /* C = a + b ÷ Re (벤치 "inv" 식). a 0 = 끔(고정 C) */
+    double c_re_min;            /* 이 Re 아래는 끝 값으로 고정 (시험 범위 밖으로 늘려 쓰지 않음) */
+    double visc_20c_pa_s;       /* 가스 점성 μ (20 °C) — Re = 4ρQ₀ ÷ (π dₜ μ) */
+    double visc_sutherland_k;   /* Sutherland 상수 S: μ(T) = μ₂₀ (T/293.15)^1.5 (293.15 + S) ÷ (T + S) */
     double gas_molar_kg_mol;    /* 평균 분자량: CH₄ 60 % · CO₂ 40 % → 0.02723 */
 
     /* 사용 이벤트 (4절) — 실제 유량 기준 */
@@ -31,8 +38,10 @@ typedef struct {
     double event_end_m3h;       /* 0.03 m³/h 아래 */
     double event_end_hold_s;    /* 60 s 이상 */
     /* 잡음 컷오프 (11/17 결정): 이보다 작은 유량은 사용량에 안 더함.
-     * 차압이 작으면 √ 때문에 크게 부풀려짐 — HSC 1칸(0.153 Pa)만 떠도 0.03 m³/h, 하루 0.7 m³.
-     * 기본값 = 이벤트 시작 기준 0.05 m³/h (≈ 0.45 Pa). 벤치 잡음 재고 바꿈.
+     * 차압이 작으면 √ 때문에 크게 부풀려짐 — HSC 1칸(0.153 Pa)만 떠도 0.023 m³/h, 하루 0.56 m³.
+     * 기본값 = 이벤트 시작 기준 0.05 m³/h (≈ 0.71 Pa). 벤치 잡음 재고 바꿈.
+     * (숫자는 현장 Kisii 1,700 m · 25 °C · 정압 600 Pa · 바이오가스 · 벤투리 4/16 mm · C(Re) 기준, 11/24 다시 셈.
+     *  옛 예제 벤투리 4.62/25 mm · C 0.97 에선 1칸 0.03 m³/h · 0.05 m³/h ≈ 0.33 Pa)
      * 이벤트 · 고갈 판정과 누설 B(30분 평균 차압)는 자르기 전 값으로 봄. */
     double cutoff_m3h;
 
@@ -57,6 +66,16 @@ typedef struct {
     /* 데이터 품질 (10절): 센서 만점의 95 % 를 넘으면 범위 이탈 */
     double dp_full_scale_pa;    /* HSC ±10 mbar → 1000 Pa */
     double pg_full_scale_pa;    /* ABP2 정압 만점 */
+
+    /* HSC 영점 따라가기 (PCB3_3, 11/24) — 벤치 STM 펌웨어 CONFIG_BENCH_HSC_TRACK_SDP 와 같은 방식:
+     * SDP810 이 ±band 안(흐름 없음)이고 HSC − SDP810 이 ±diff 안이면 영점을 차이 × (dt ÷ τ)씩 SDP810 쪽으로 끌어감.
+     * 벤치는 0.1 s 마다 · τ 20 s, 보드는 평소 10 s 마다 읽어 τ 10분. 조리 중엔 멈춤. τ 0 = 끔 */
+    double zero_track_tau_s;
+    double zero_track_band_pa;
+    double zero_track_diff_pa;
+    /* 버튼 영점에서 벗어날 수 있는 폭 (11/24 검수 7번). SDP810 관이 빠지면 SDP810 이 0 을 읽어
+     * 5 Pa 미만의 진짜 차압(누설 · 약한 흐름)을 영점으로 지울 수 있어 막음. 온도로 흐르는 0.2–0.4 Pa 는 넉넉히 들어감 */
+    double zero_track_max_pa;
 } meter_cfg_t;
 
 /* 한 번 읽은 센서 값 */
@@ -103,7 +122,10 @@ typedef struct {
 
 typedef struct {
     meter_cfg_t cfg;
-    double zero_pa;             /* 영점 Z (설치 때 버튼으로) */
+    double zero_pa;             /* 영점 Z (설치 때 버튼으로, SDP810 이 있으면 흐름 없을 때 따라감 — 저장은 버튼 값만) */
+    double zero_base_pa;        /* 따라가기 기준 = 버튼으로 잡은 영점 (meter_set_zero) */
+    double zero_track_s;        /* 켠 뒤 영점을 따라간 시간 (시험 · 로그용) */
+    uint32_t zero_limit_hits;   /* 따라가다 한도(±zero_track_max_pa)에 닿은 횟수 — 늘면 앱이 로그 (관 확인) */
 
     /* 적산 — 정전 뒤에도 이어 가야 해서 바깥에서 저장 · 복원함 */
     double total_nm3;           /* 누적 사용량 (표준) */
@@ -113,6 +135,7 @@ typedef struct {
     double last_flow_m3h;
     double last_flow_nm3h;
     double last_rho;
+    double last_t_k;            /* 마지막 가스 온도 K (누설 유량의 Re 용) */
 
     /* 사용 이벤트 */
     bool evt_active;
@@ -173,6 +196,9 @@ bool meter_is_flowing(const meter_t *m);
 /* 순수 식 (시험 · 다른 모듈에서도 씀) */
 double meter_gas_density(double p_abs_pa, double t_k, double molar_kg_mol);
 double meter_flow_m3s(double dp_pa, double rho, double c, double throat_d_m, double inlet_d_m);
+double meter_gas_viscosity(const meter_cfg_t *c, double t_k);          /* Pa·s */
+/* 그 차압에서 쓸 C. re_out 에 Re(고정 C 이면 0). 벤치 venturi.py discharge_coef 와 같은 식 */
+double meter_discharge_c(const meter_cfg_t *c, double dp_pa, double rho, double t_k, double *re_out);
 double meter_normal_factor(double p_abs_pa, double t_k);
 double meter_patm_from_altitude(double alt_m);   /* BMP390 이 없을 때 · 시험용 */
 double meter_median(const double *v, uint16_t n);

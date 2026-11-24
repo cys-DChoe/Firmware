@@ -35,7 +35,7 @@ size_t settings_pack(const settings_t *s, uint8_t *o)
     put_f64(o + 0, s->zero_pa);
     put_f64(o + 8, s->vent_p_pa);
     o[16] = s->band;
-    o[17] = (uint8_t)((s->zero_set ? 1u : 0u) | (s->keys_set ? 2u : 0u) | (s->batt_cal_set ? 4u : 0u));
+    o[17] = (uint8_t)((s->zero_set ? 1u : 0u) | (s->keys_set ? 2u : 0u) | (s->batt_cal_set ? 4u : 0u) | (s->sdp_off ? 8u : 0u));
     memcpy(o + 18, s->dev_eui, 8);
     memcpy(o + 26, s->app_eui, 8);
     memcpy(o + 34, s->app_key, 16);
@@ -54,6 +54,7 @@ void settings_unpack(const uint8_t *in, settings_t *s)
     s->zero_set = (in[17] & 1u) != 0u;
     s->keys_set = (in[17] & 2u) != 0u;
     s->batt_cal_set = (in[17] & 4u) != 0u;
+    s->sdp_off = (in[17] & 8u) != 0u;      /* 옛 판은 0 = 켬 */
     memcpy(s->dev_eui, in + 18, 8);
     memcpy(s->app_eui, in + 26, 8);
     memcpy(s->app_key, in + 34, 16);

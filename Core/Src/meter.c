@@ -23,6 +23,35 @@ double meter_flow_m3s(double dp_pa, double rho, double c, double throat_d_m, dou
     return c * area * sqrt(2.0 * dp_pa / rho) / sqrt(1.0 - b4);
 }
 
+double meter_gas_viscosity(const meter_cfg_t *c, double t_k)
+{
+    const double s = c->visc_sutherland_k;
+    return c->visc_20c_pa_s * pow(t_k / 293.15, 1.5) * (293.15 + s) / (t_k + s);
+}
+
+/* C(Re) — Re 는 고정 C(discharge_c, 0.97)로 낸 유량 Q₀ 로 잡음: 시험에서 C 를 그렇게 맞췄으므로 되풀이 계산이 필요 없음 */
+double meter_discharge_c(const meter_cfg_t *c, double dp_pa, double rho, double t_k, double *re_out)
+{
+    if (re_out != NULL) {
+        *re_out = 0.0;
+    }
+    if (c->c_re_a <= 0.0) {
+        return c->discharge_c;
+    }
+    const double q0 = meter_flow_m3s(dp_pa, rho, c->discharge_c, c->throat_d_m, c->inlet_d_m);
+    const double mu = meter_gas_viscosity(c, t_k);
+    double re = (q0 > 0.0 && mu > 0.0) ? 4.0 * rho * q0 / (M_PI * c->throat_d_m * mu) : 0.0;
+    if (re < c->c_re_min) {
+        re = c->c_re_min;                   /* 시험 범위 아래는 끝 값 (흐름 0 이어도 같은 C) */
+    }
+    if (re_out != NULL) {
+        *re_out = re;
+    }
+    const double cd = re > 0.0 ? c->c_re_a + c->c_re_b / re : c->discharge_c;
+    /* 벤치 venturi.py 처럼 0.5–1.05 밖이면 식을 믿지 않고 고정 C (계수를 잘못 넣었을 때 · 검수 9번) */
+    return (cd < METER_C_MIN || cd > METER_C_MAX) ? c->discharge_c : cd;
+}
+
 /* 3절: Qₙ = Q × (P_abs ÷ 101,325) × (273.15 ÷ T) — 그 곱하는 몫 */
 double meter_normal_factor(double p_abs_pa, double t_k)
 {
@@ -60,11 +89,19 @@ double meter_median(const double *v, uint16_t n)
 void meter_default_cfg(meter_cfg_t *c)
 {
     memset(c, 0, sizeof(*c));
-    /* 계산식 문서 예제 1 값 — 설계서 2번: 기구 설계 · 벤치 시험에서 값이 나오면 바꿈 */
-    c->throat_d_m = 4.62e-3;
-    c->inlet_d_m = 25.0e-3;
-    c->discharge_c = 0.97;
-    c->discharge_c_low = 0.97;      /* 저유량 C 는 벤치에서 따로 구함 */
+    /* 벤투리 — 벤치 실물(11/19 확인: 입구 16 mm · 목 4 mm, β 0.25) + 11/20 가스계량기 비교 시험 HSC 식
+     * (bench/server/venturi_cal.json "hsc": inv, a 0.97739 · b −158.91 · re_min 1725, 시험 Re 약 1,700–5,900, 6점 ±0.3 %) */
+    c->throat_d_m = 4.0e-3;
+    c->inlet_d_m = 16.0e-3;
+    c->discharge_c = 0.97;          /* Q₀ (Re 잡기) 용 */
+    c->discharge_c_low = 0.97;      /* c_re 를 끄면 쓰는 저유량 C */
+    c->c_re_a = 0.97739;
+    c->c_re_b = -158.91;
+    c->c_re_min = 1725.0;
+    /* 바이오가스(CH₄ 60 % · CO₂ 40 %) 점성: 문헌값 CH₄ 1.10e-5 · CO₂ 1.47e-5 Pa·s(20 °C)를 Wilke 식으로 섞음 → 1.318e-5,
+     * 0–50 °C 에 맞춘 S 220 K (오차 0.003 % 미만). 현장 가스 조성이 다르면 바꿈. 공기(벤치)는 1.8133e-5 · 110.4 */
+    c->visc_20c_pa_s = 1.318e-5;
+    c->visc_sutherland_k = 220.0;
     c->gas_molar_kg_mol = 0.6 * 0.01604 + 0.4 * 0.04401;   /* 0.02723 */
 
     c->event_start_m3h = 0.05;
@@ -90,6 +127,11 @@ void meter_default_cfg(meter_cfg_t *c)
 
     c->dp_full_scale_pa = 1000.0;   /* HSC ±10 mbar */
     c->pg_full_scale_pa = 6000.0;   /* ABP2DRNT006KG: 0–6 kPa 게이지 (스펙 시트대로 확정 11/17, 다른 품번은 설정 명령으로) */
+
+    c->zero_track_tau_s = 600.0;    /* 10분 — 10 s 간격 한 번 읽기 흔들림(0.24 Pa)이 영점에 약 0.02 Pa 로 남음 */
+    c->zero_track_band_pa = 1.0;    /* 벤치 HSC_TRACK_BAND_PA */
+    c->zero_track_diff_pa = 5.0;    /* 벤치와 같음 — 더 다르면 한쪽만 압력을 받는 중 */
+    c->zero_track_max_pa = 1.0;     /* 버튼 영점 ±1 Pa 안에서만 (검수 7번) */
 }
 
 void meter_init(meter_t *m, const meter_cfg_t *cfg)
@@ -108,6 +150,7 @@ void meter_init(meter_t *m, const meter_cfg_t *cfg)
 void meter_set_zero(meter_t *m, double zero_pa)
 {
     m->zero_pa = zero_pa;
+    m->zero_base_pa = zero_pa;      /* 따라가기는 여기서 ±zero_track_max_pa 안 */
 }
 
 bool meter_is_flowing(const meter_t *m)
@@ -248,15 +291,33 @@ void meter_step(meter_t *m, const meter_sample_t *s, double dt)
     if (dt <= 0.0) {
         return;
     }
+    /* HSC 영점 따라가기 — SDP810 이 있고 흐름이 없을 때만 (meter_cfg_t 설명). 이번 값부터 새 영점으로 계산 */
+    if (c->zero_track_tau_s > 0.0 && s->dp2_ok && !m->evt_active && s->dp2_pa > -c->zero_track_band_pa &&
+        s->dp2_pa < c->zero_track_band_pa) {
+        const double diff = (s->dp_raw_pa - m->zero_pa) - s->dp2_pa;
+        if (diff > -c->zero_track_diff_pa && diff < c->zero_track_diff_pa) {
+            const double a = dt / c->zero_track_tau_s;
+            double z = m->zero_pa + diff * (a > 1.0 ? 1.0 : a);
+            const double lo = m->zero_base_pa - c->zero_track_max_pa, hi = m->zero_base_pa + c->zero_track_max_pa;
+            if (z < lo || z > hi) {
+                z = z < lo ? lo : hi;       /* 한도 — 관이 빠졌거나 센서 한쪽이 이상함 */
+                m->zero_limit_hits++;
+            }
+            m->zero_pa = z;
+            m->zero_track_s += dt;
+        }
+    }
     const double dp = s->dp_raw_pa - m->zero_pa;           /* 5절: ΔP = ΔP_raw − Z */
     const double t_k = s->t_gas_c + METER_T_STD_K;
     const double p_abs = s->patm_pa + s->pg_pa;
     const double rho = meter_gas_density(p_abs, t_k, c->gas_molar_kg_mol);
-    const double q = meter_flow_m3s(dp, rho, c->discharge_c, c->throat_d_m, c->inlet_d_m);
+    const double cd = meter_discharge_c(c, dp, rho, t_k, NULL);
+    const double q = meter_flow_m3s(dp, rho, cd, c->throat_d_m, c->inlet_d_m);
     const double nf = meter_normal_factor(p_abs, t_k);
     const double q_h = q * 3600.0;
 
     m->last_rho = rho;
+    m->last_t_k = t_k;
     m->last_flow_m3h = q_h;
     m->last_flow_nm3h = q_h * nf;
 
@@ -353,8 +414,10 @@ void meter_minute(meter_t *m, meter_minute_t *out)
             const double dp_avg = m->lw_dp_acc / m->lw_s;
             if (dp_avg >= c->leak_dp_min_pa) {
                 m->leak_streak++;
-                m->leak_flow_m3h = 3600.0 * meter_flow_m3s(dp_avg, m->last_rho, c->discharge_c_low,
-                                                           c->throat_d_m, c->inlet_d_m);
+                const double c_leak = c->c_re_a > 0.0
+                                          ? meter_discharge_c(c, dp_avg, m->last_rho, m->last_t_k, NULL)
+                                          : c->discharge_c_low;
+                m->leak_flow_m3h = 3600.0 * meter_flow_m3s(dp_avg, m->last_rho, c_leak, c->throat_d_m, c->inlet_d_m);
             } else {
                 m->leak_streak = 0;
             }

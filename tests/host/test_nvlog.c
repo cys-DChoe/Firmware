@@ -161,6 +161,7 @@ int main(void)
         w.app_key[i] = (uint8_t)(0x11 * i);
     }
     w.batt_cal_mv = -23;
+    w.sdp_off = true;
     ok("설정 저장", settings_save(&ls, &w) == NVLOG_OK);
     nvlog_t ls2;
     nvlog_mount(&ls2, &OPS, PERSIST_SETTINGS_BASE);
@@ -168,7 +169,7 @@ int main(void)
     ok("다시 켜서 읽은 값 = 저장한 값", settings_load(&ls2, &r) == NVLOG_OK && r.zero_pa == w.zero_pa &&
                                             r.vent_p_pa == w.vent_p_pa && r.band == 7 && r.zero_set && r.keys_set &&
                                             memcmp(r.dev_eui, w.dev_eui, 8) == 0 && memcmp(r.app_key, w.app_key, 16) == 0 &&
-                                            r.batt_cal_mv == -23);
+                                            r.batt_cal_mv == -23 && r.sdp_off && r.zero_set && r.keys_set);
     printf("옛 판(50 B, 배터리 보정 없음) 설정도 읽힘\n");
     {
         uint8_t old[50];
@@ -177,7 +178,7 @@ int main(void)
         memcpy(old, full, 50);
         nvlog_save(&ls2, old, 50);
         settings_t o;
-        ok("보정값은 0 으로, 나머지는 그대로", settings_load(&ls2, &o) == NVLOG_OK && o.batt_cal_mv == 0 &&
+        ok("보정값은 0 으로, 나머지는 그대로", settings_load(&ls2, &o) == NVLOG_OK && o.batt_cal_mv == 0 && o.sdp_off &&
                                                     o.zero_pa == w.zero_pa && o.keys_set);
         settings_save(&ls2, &w);
     }
