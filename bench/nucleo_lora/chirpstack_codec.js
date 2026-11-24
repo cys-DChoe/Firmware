@@ -16,8 +16,11 @@ function s16(b, i) { var v = u16(b, i); return v >= 0x8000 ? v - 0x10000 : v; }
 function u32(b, i) { return ((b[i] << 24) >>> 0) + (b[i + 1] << 16) + (b[i + 2] << 8) + b[i + 3]; }
 function opt16(b, i, k) { var v = s16(b, i); return v === -32768 ? null : v / k; }
 
-function decodeReport(b) {
-  var v2 = b.length === 28 && b[0] === 2;
+// 포트 8 만: 11/23 Nucleo 벤치 옛 형식(버전 1 + 꼬리 4 B = 28 B)도 받음 — 꼬리는 v2 24 · 26 번과 같은 자리 · 같은 눈금.
+// 벤치를 v2 로 다시 굽기 전까지 ChirpStack 화면에서 값이 계속 보이게 하려는 것 (서버 풀이 tools/report_decode.py 는 거부)
+function decodeReport(b, port) {
+  var benchTail = port === 8 && b.length === 28 && b[0] === 1;
+  var v2 = (b.length === 28 && b[0] === 2) || benchTail;
   var v1 = b.length === 24 && b[0] === 1;
   if (!v2 && !v1) {
     return { errors: ["형식 버전 " + b[0] + " 과 길이 " + b.length + " B 가 안 맞음 (v2 = 28 B · v1 = 24 B)"] };
@@ -57,7 +60,7 @@ function decodeCounts(b) {
 
 function decodeUplink(input) {
   var b = input.bytes;
-  if (REPORT_PORTS.indexOf(input.fPort) >= 0) { return decodeReport(b); }
+  if (REPORT_PORTS.indexOf(input.fPort) >= 0) { return decodeReport(b, input.fPort); }
   if (input.fPort === COUNTS_PORT) { return decodeCounts(b); }
   return { errors: ["모르는 포트 " + input.fPort + " (" + b.length + " B)"] };
 }
