@@ -71,6 +71,8 @@ lp_wake_t lp_sleep_ms(uint32_t ms)
     }
     HAL_SuspendTick();                                  /* SysTick 이 1 ms 마다 깨우지 않게 */
     HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI);
+    /* 깨면 시스템 클럭은 HSI 또는 CSI(설정 따라, DS14258 3.10) — 1-Wire µs 지연이 SystemCoreClock 을 쓰므로 다시 읽음 (점2) */
+    SystemCoreClockUpdate();
     HAL_ResumeTick();
     HAL_RTCEx_DeactivateWakeUpTimer(&g_rtc);
     /* Stop 중엔 RTC 그림자 레지스터(시각 읽는 칸)가 안 따라옴 → 깬 직후 읽으면 잠들기 전 시각이 나올 수 있음.
