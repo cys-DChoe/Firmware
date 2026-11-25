@@ -37,6 +37,8 @@ typedef struct {
     int flash_on_calls;
     char last_log[96];
     int minute_logs;            /* "1분 #" 로 시작하는 로그 수 */
+    int probe_logs;             /* "DS18B20:" 로 시작하는 로그 수 */
+    char probe_log[160];
     char minute_log[352];
 } board_t;
 
@@ -73,6 +75,10 @@ static void b_log(void *ctx, const char *m)
     if (strncmp(m, "1분 #", strlen("1분 #")) == 0) {
         b->minute_logs++;
         snprintf(b->minute_log, sizeof(b->minute_log), "%s", m);
+    }
+    if (strncmp(m, "DS18B20:", strlen("DS18B20:")) == 0) {
+        b->probe_logs++;
+        snprintf(b->probe_log, sizeof(b->probe_log), "%s", m);
     }
 }
 static bool b_set_time(void *ctx, uint32_t t)
@@ -915,6 +921,39 @@ int main(int argc, char **argv)
         B.s.dp2_ok = false;
         idle_gas();
         meter_set_zero(&A.meter, A.settings.zero_pa);
+    }
+
+    printf("DS18B20 있음 ↔ 없음 바뀌면 로그 한 줄 (설계서 PCB3_3 5번)\n");
+    {
+        idle_gas();
+        B.s.t_probe_ok = false;
+        A.probe_state = 0u;                        /* 막 켠 것처럼 */
+        const uint32_t up = A.up_s;
+        A.up_s = 0u;
+        B.probe_logs = 0;
+        run_ack(60);
+        ok("켠 뒤 2분 안엔 값이 없어도 아직 모름 · 로그 없음", A.probe_state == 0u && B.probe_logs == 0);
+        B.s.t_probe_ok = true;
+        B.s.t_probe_c = 24.0;
+        run_ack(20);
+        ok("켠 뒤 처음 잡힌 건 조용히 (켤 때 main 이 찍음)", A.probe_state == 1u && B.probe_logs == 0);
+        B.s.t_probe_ok = false;
+        run_ack(20);
+        ok("빠지면 한 줄 · 끊김", B.probe_logs == 1 && strstr(B.probe_log, "끊김") != NULL);
+        run_ack(10 * 60);
+        ok("계속 없어도 더 안 찍음", B.probe_logs == 1 && A.probe_state == 2u);
+        B.s.t_probe_ok = true;
+        run_ack(20);
+        ok("다시 꽂으면 한 줄 · 다시 잡힘", B.probe_logs == 2 && strstr(B.probe_log, "다시 잡힘") != NULL);
+        run_ack(5 * 60);
+        ok("계속 있으면 더 안 찍음", B.probe_logs == 2);
+        B.s.t_probe_ok = false;
+        A.probe_state = 0u;
+        A.up_s = 0u;
+        run_ack(3 * 60);
+        ok("처음부터 없으면 2분 뒤 조용히 없음 (PCB3_2 · 안 꽂음)", A.probe_state == 2u && B.probe_logs == 2);
+        A.up_s += up;
+        idle_gas();
     }
 
     printf("SDP810 끄기 · 켜기 (설정 04, 11/24)\n");

@@ -1,5 +1,5 @@
 // ChirpStack 코덱(bench/nucleo_lora/chirpstack_codec.js)을 맥 시험 벡터와 맞대 봄 — tests/host/run.sh 가 node 가 있으면 돌림
-// node tools/codec_selftest.js <코덱 js> <cal_vectors.txt>   (11/24, 지금은 포트 4 교정값 보고)
+// node tools/codec_selftest.js <코덱 js> <cal_vectors.txt>   (11/24 포트 4 교정값 보고 · 11/25 포트별 SDP810 보정 표시)
 var fs = require("fs");
 eval(fs.readFileSync(process.argv[2], "utf8"));
 var bad = 0, n = 0;
@@ -22,6 +22,16 @@ fs.readFileSync(process.argv[3], "utf8").split("\n").forEach(function (line) {
       console.log("  FAIL 코덱 " + name + ": " + got + " / C " + want);
     }
   });
+});
+// 1분 보고 포트별 SDP810 보정 표시 (11/25: 보드 1 · 벤치 0.3 = 9 는 보정함, 옛 벤치 8 은 안 함)
+var rep = [2, 0, 1, 106, 250, 184, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 200, 125, 170, 0, 0, 128, 0, 128, 0];
+[[1, true], [8, false], [9, true]].forEach(function (pc) {
+  n++;
+  var r = decodeUplink({ fPort: pc[0], bytes: rep });
+  if (r.errors || r.data.sdp810_pressure_corrected !== pc[1]) {
+    bad++;
+    console.log("  FAIL 코덱 포트 " + pc[0] + " 보정 표시 " + (r.errors ? r.errors : r.data.sdp810_pressure_corrected));
+  }
 });
 console.log("  코덱 풀기 대조: " + (n - bad) + " / " + n + " 통과");
 process.exit(bad ? 1 : 0);

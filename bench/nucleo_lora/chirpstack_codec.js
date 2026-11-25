@@ -1,6 +1,6 @@
 // ChirpStack v4 기기 프로필 → Codec → JavaScript 에 붙여 넣는 풀이 코드
 // 1분 보고 형식 v2(28 B, Core/Inc/report.h) · 옛 v1(24 B) · 횟수 보고(19 B) 를 사람이 읽는 값으로 바꿈
-//   포트 1 = 보드(RAK3172, app.h APP_LORA_PORT) 1분 보고 · 포트 8 = Nucleo 벤치(Wio-E5 기본 포트) 1분 보고
+//   포트 1 = 보드(RAK3172, app.h APP_LORA_PORT) 1분 보고 · 포트 8 = Nucleo 벤치 0.2 이하(Wio-E5 기본 포트) · 포트 9 = Nucleo 벤치 0.3(11/25, SDP810 대기압 보정함)
 //   포트 3 = 보드 횟수 보고(APP_CNT_PORT) · 포트 4 = 교정값 보고(APP_CAL_PORT, 설정 05 뒤 · 11/24)
 // 서버 참고 구현 tools/report_decode.py 와 같은 눈금 · 같은 거부 규칙(버전과 길이가 짝이 맞아야 함)
 // 11/24 v2: 24 · 26 번에 SDP810 차압 1분 평균(0.02 Pa) · DS18B20 온도(0.01 °C), 부호 있는 16비트, 0x8000 = 없음
@@ -8,7 +8,7 @@
 var FLAGS = ["FLOWING", "VENTING", "DEPLETED", "LEAK_B", "OUT_OF_RANGE", "BATT_WARN", "BATT_QUALITY",
              "ZERO_UNSET", "TIME_UNSYNCED", "RESENT", "CLIPPED", "INCOMPLETE", "BOOT", "FAULT_RESET",
              "BATT_OFF", "BARO_HELD"];
-var REPORT_PORTS = [1, 8];
+var REPORT_PORTS = [1, 8, 9];
 var COUNTS_PORT = 3;
 var CAL_PORT = 4;
 var CAL_NAMES = ["c_re_a", "c_re_b", "c_re_min", "throat_mm", "inlet_mm", "visc_upas", "visc_s_k", "molar_gmol"];
@@ -52,8 +52,8 @@ function decodeReport(b, port) {
     flags: names,
     sdp810_pa: v2 ? opt16(b, 24, 50) : null,    // SDP810 차압 1분 평균 (v1 · 센서 없음 = null)
     ds18b20_c: v2 ? opt16(b, 26, 100) : null,   // DS18B20 가스관 온도 (v1 · 센서 없음 = null)
-    // SDP810 값을 966 hPa 기준 대기압 보정했는지: 보드(포트 1, 11/24 부터) 함 · Nucleo 벤치(포트 8) 안 함 — 같은 칸이라도 뜻이 다름
-    sdp810_pressure_corrected: port === 1
+    // SDP810 값을 966 hPa 기준 대기압 보정했는지: 보드(포트 1) · Nucleo 벤치 0.3(포트 9) 함 · 옛 벤치(포트 8) 안 함 — 같은 칸이라도 뜻이 다름
+    sdp810_pressure_corrected: port !== 8
   } };
 }
 

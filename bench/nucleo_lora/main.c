@@ -12,7 +12,7 @@
  * 흐름: 켬 → 센서 확인 → 모듈 AT 확인 → 가입(실패면 30 초 뒤 다시) → 1초마다 재기 · 10초마다 로그 → 60초마다 28바이트(report.h 형식 v2) 송신
  * 보고 칸: 정압 = ABP2, 평균 차압 = HSC 60초 평균(영점 안 뺌), 가스 온도 = ABP2 온도, 대기압 = BME280.
  *          누적 · 유량 · 시각 · 배터리는 벤치에 없어서 0 (배터리 칸은 범위 밑이라 CLIPPED 표시가 같이 켜짐).
- * 24 · 26 번 칸(SDP810 60초 평균 0.02 Pa · DS18B20 0.01 °C, 없으면 0x8000)은 11/23 벤치 꼬리로 시작해
+ * 24 · 26 번 칸(SDP810 60초 평균 0.02 Pa · 11/25 부터 대기압 보정, 포트 9 · DS18B20 0.01 °C, 없으면 0x8000)은 11/23 벤치 꼬리로 시작해
  * 11/24 보드 형식 v2(report.h)에 그대로 들어감 — 이제 report_encode 가 같이 묶음. 풀기 tools/report_decode.py.
  * 모듈 대역 · 키 · OTAA 는 모듈에 저장된 값(11/19 맥에서 넣음)을 씀 — 여기선 안 바꿈.
  */
@@ -28,10 +28,14 @@
 #include "log.h"
 #include "lora_uart_stm32.h"
 #include "report.h"
+#include "sdp810_comp.h"
 #include "sdp810.h"
 #include "wioe5.h"
 
-#define FW "nucleo-lora-bench 0.2"
+#define FW "nucleo-lora-bench 0.3"
+/* 11/25 0.3: SDP810 값을 보드처럼 대기압 보정(× 96,600 ÷ (BME280 대기압 + ABP2 정압), Core/Inc/sdp810_comp.h)해서
+ * 포트 9 로 보냄. 0.2 이하(보정 안 함)는 포트 8 — 코덱이 포트로 구분(sdp810_pressure_corrected). 10초 로그 줄은 보정 전 값 그대로 */
+#define BENCH_PORT_CMD "AT+PORT=9"
 #define REPORT_PERIOD_MS   60000u
 #define JOIN_RETRY_MS      30000u
 #define JOIN_TIMEOUT_MS    30000u
@@ -173,6 +177,7 @@ int main(void)
     wio_dump("AT+CH", 1500);          /* 쓰는 채널 목록 (수용 대수 계산용) */
     wio_dump("AT+ADR", 500);
     wio_dump("AT+POWER", 500);
+    printf("[LoRa] 보고 포트 9 (SDP810 대기압 보정함) %s\n", wio_query(BENCH_PORT_CMD, 1000) == WIO_OK ? "설정됨" : "설정 실패 — 모듈 기본 포트 8 로 나감");
 
     bool joined = join_once();
     uint32_t t_join = HAL_GetTick();
@@ -184,6 +189,7 @@ int main(void)
 
     /* 1분 평균 */
     double dp_sum = 0.0, sdp_sum = 0.0;
+    double patm_last = NAN;             /* 마지막 정상 대기압 (SDP810 보정용) */
     uint32_t dp_n = 0, sdp_n = 0;
     sample_t s = {0};
 
@@ -197,8 +203,12 @@ int main(void)
                 dp_sum += s.hsc.p_pa;
                 dp_n++;
             }
-            if (s.sdp_ok) {
-                sdp_sum += s.sdp_pa;
+            if (s.bme_ok) {
+                patm_last = s.patm_pa;
+            }
+            /* 보드와 같게: 켠 뒤 기압을 한 번도 못 쟀으면 보정을 못 하므로 그 값은 안 씀 */
+            if (s.sdp_ok && !isnan(patm_last)) {
+                sdp_sum += sdp810_p_comp(s.sdp_pa, patm_last + (s.abp2_ok ? s.abp2.p_pa : 0.0));
                 sdp_n++;
             }
             if (n % 10u == 0u) {

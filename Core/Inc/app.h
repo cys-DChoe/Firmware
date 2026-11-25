@@ -75,6 +75,7 @@
 #define APP_LORA_BAUD_OLD    115200u /* 모듈 공장값 */
 #define APP_TIMESYNC_S       86400u  /* 하루에 한 번 망 시각으로 다시 맞춤 */
 #define APP_TIME_STEP_S      2       /* 이만큼 넘게 어긋나면 RTC 를 고침 */
+#define APP_PROBE_GRACE_S    120u    /* 켠 뒤 이만큼 DS18B20 값이 없으면 "없음"으로 봄 (첫 변환 + 60 s 간격 한 번 더) */
 #define APP_MAX_DT_S         60u     /* 한 번에 적산하는 최대 간격 (시계가 뛰었을 때 막음) */
 #define APP_TX_TIMEOUT_S     60u     /* 송신 시작 뒤 '끝' 소식을 기다리는 한도 (SF12 송신 + 수신 창 2개보다 넉넉히) */
 #define APP_JOIN_TIMEOUT_S   300u    /* AT+JOIN=1:0:10:8 = 8번 × 10 s 간격 + 수신 창, 넉넉히 */
@@ -149,6 +150,7 @@ typedef struct {
     bool baro_held_min;         /* 이번 분에 그런 때가 있었음 → 보고 비트 BARO_HELD */
     double sdp_sum, probe_sum;  /* 이번 분 SDP810 차압 · DS18B20 온도 합 (보고 v2 24 · 26 번 = 평균) */
     uint32_t zero_hits_said;    /* 영점 따라가기 한도 닿음을 로그로 알린 횟수 (meter.zero_limit_hits 와 비교) */
+    uint8_t probe_state;        /* DS18B20: 0 아직 모름 · 1 있음 · 2 없음 — 바뀐 순간에 로그 한 줄 (설계서 PCB3_3 5번) */
     uint16_t sdp_n, probe_n;
     bool store_failed;          /* 마지막 1분 기록 · 누적 저장이 실패함 (다음 성공까지) */
     bool tx_failed;             /* 마지막 송신이 실패함 (다음 성공까지) */
