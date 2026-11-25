@@ -7,6 +7,7 @@
 #include <string.h>
 #include "main.h"
 #include "app.h"
+#include "board_check.h"
 #include "batt_stm32.h"
 #include "flash_spi_stm32.h"
 #include "i2c_stm32.h"
@@ -194,6 +195,26 @@ static void button_check(void)
     HAL_GPIO_WritePin(LED2_PORT, LED2_PIN, GPIO_PIN_RESET);
 }
 
+/* 판 확인용 PA9 읽기: 풀업 입력으로 잠깐 읽고 바로 아날로그로 되돌림
+ * (PCB3_3 은 GND 라 풀업 30–50 kΩ 으로 66–110 µA 가 1–2 ms 만 흐름, DS14258 표 58).
+ * HAL_PWREx_DisableUCPDDeadBattery() 뒤에 불러야 함: PA9 는 UCPD1_DB1 — 죽은 배터리 동작이 켜진 채 PA9 를 높이면
+ * 짝 CC1 핀인 PB13(TEMP_DQ)에 5.1 kΩ 풀다운이 걸림(풀다운은 PA9 가 아니라 PB13 쪽). 출력으로는 절대 안 씀 */
+static bool board_pa9_low(void)
+{
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    GPIO_InitTypeDef g = {0};
+    g.Pin = GPIO_PIN_9;
+    g.Mode = GPIO_MODE_INPUT;
+    g.Pull = GPIO_PULLUP;
+    HAL_GPIO_Init(GPIOA, &g);
+    HAL_Delay(1);                                   /* 풀업이 핀을 채울 시간 (수 µs 면 되지만 넉넉히) */
+    const bool low = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9) == GPIO_PIN_RESET;
+    g.Mode = GPIO_MODE_ANALOG;
+    g.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(GPIOA, &g);
+    return low;
+}
+
 int main(void)
 {
     SystemCoreClockUpdate();
@@ -219,6 +240,17 @@ int main(void)
         printf(" (코드 %u · 주소 0x%08lx · CFSR 0x%08lx)", boot.code, (unsigned long)boot.info, (unsigned long)boot.cfsr);
     }
     printf(wdg_abnormal(&boot) ? " · 이어서 %lu번째\n" : "\n", (unsigned long)boot.streak);
+    /* 판 확인 (설계서 판 구분 4번): 잘못 구웠어도 하던 일은 계속 — 어느 쪽이든 없는 센서는 '응답 없음'으로 끝나 판은 안 상함.
+     * 로그 먼저, 그다음 빨강 4번. 켠 뒤로도 app 이 10 s 마다 빨강 4번을 계속 보임(app_set_board_bad) */
+    bool board_ok;
+    {
+        char m[160];                    /* 가장 긴 글 97 B */
+        board_ok = board_check(BOARD_PA9_GND, board_pa9_low(), BOARD_NAME, m, sizeof(m));
+        printf("%s\n", m);
+        if (!board_ok) {
+            hw_led(NULL, true, 4u);
+        }
+    }
 
     /* 1) 시계: LSE → RTC · 잠 설정 */
     const HAL_StatusTypeDef lse = lse_start();
@@ -290,6 +322,9 @@ int main(void)
     /* 4) 계산 · 저장값 되살리기 */
     app_init(&s_app, &HW, &s_ring, &s_nv_set, &s_nv_ctr, &s_rak);
     app_set_boot(&s_app, wdg_abnormal(&boot));
+    if (!board_ok) {
+        app_set_board_bad(&s_app);
+    }
     if (cal_ok) {
         app_set_cal(&s_app, &s_nv_cal);     /* 읽을 땐 app 이 플래시를 깨움 */
     } else {

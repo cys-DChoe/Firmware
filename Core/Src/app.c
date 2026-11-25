@@ -439,6 +439,11 @@ void app_set_boot(app_t *a, bool abnormal)
     a->boot_flags = REPORT_F_BOOT | (abnormal ? REPORT_F_FAULT_RESET : 0u);
 }
 
+void app_set_board_bad(app_t *a)
+{
+    a->board_bad = true;
+}
+
 static bool no_answer(rak_err_t e) { return e == RAK_E_TIMEOUT || e == RAK_E_IO; }
 
 /* 가입 시작 (시각 · 횟수 기록) */
@@ -953,7 +958,8 @@ static void led_tick(app_t *a, uint32_t now)
     }
     a->next_led_s = now + APP_LED_PERIOD_S;
     const bool lora_bad = !a->settings.keys_set || a->rak == NULL || !a->lora_ready || !a->rak->joined || a->tx_failed;
-    a->led_state = a->store_failed                 ? APP_LED_STORE
+    a->led_state = a->board_bad                    ? APP_LED_BOARD
+                   : a->store_failed               ? APP_LED_STORE
                    : (!a->read_ok || a->baro_held) ? APP_LED_SENSOR
                    : lora_bad                      ? APP_LED_LORA
                                                    : APP_LED_OK;

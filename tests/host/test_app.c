@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "app.h"
+#include "board_check.h"
 #include "fake_lte.h"
 #include "fake_rak.h"
 #include "fake_w25q.h"
@@ -31,7 +32,7 @@ typedef struct {
     bool sdp_on;                /* 앱이 알려 준 SDP810 켜짐 (설정 04) */
     int sdp_calls;
     int save_calls;
-    int led_green, led_red1, led_red2, led_red3;   /* LED 깜빡임 횟수 (초록 1번 · 빨강 1 · 2 · 3번) */
+    int led_green, led_red1, led_red2, led_red3, led_red4;   /* LED 깜빡임 횟수 (초록 1번 · 빨강 1 · 2 · 3 · 4번) */
     bool time_ok;
     uint16_t batt;
     int flash_on_calls;
@@ -105,8 +106,10 @@ static void b_led(void *ctx, bool red, uint8_t blinks)
         b->led_red1++;
     } else if (blinks == 2u) {
         b->led_red2++;
-    } else {
+    } else if (blinks == 3u) {
         b->led_red3++;
+    } else {
+        b->led_red4++;
     }
 }
 static void b_set_sdp(void *ctx, bool on)
@@ -115,7 +118,7 @@ static void b_set_sdp(void *ctx, bool on)
     b->sdp_on = on;
     b->sdp_calls++;
 }
-static void led_zero(void) { B.led_green = B.led_red1 = B.led_red2 = B.led_red3 = 0; }
+static void led_zero(void) { B.led_green = B.led_red1 = B.led_red2 = B.led_red3 = B.led_red4 = 0; }
 static const app_hw_t HW = {b_read, b_now, b_time, b_batt, b_flash, b_log, &B, b_set_time, b_set_pg_fs, b_power_save, b_led, b_set_sdp};
 
 static fake_lte_t FL;
@@ -954,6 +957,31 @@ int main(int argc, char **argv)
         ok("처음부터 없으면 2분 뒤 조용히 없음 (PCB3_2 · 안 꽂음)", A.probe_state == 2u && B.probe_logs == 2);
         A.up_s += up;
         idle_gas();
+    }
+
+    printf("판 확인 PA9 (설계서 판 구분 4번)\n");
+    {
+        char m[160];
+        ok("PCB3_3 빌드 · PA9 0 → 맞음", board_check(true, true, "PCB3_3", m, sizeof m) && strstr(m, "PCB3_3 맞음") != NULL);
+        ok("PCB3_2 빌드 · PA9 1 → 맞음", board_check(false, false, "PCB3_2", m, sizeof m) && strstr(m, "PCB3_2 맞음") != NULL);
+        ok("PCB3_2 빌드 · PA9 0 → 잘못 구움 · PCB3_3 판",
+           !board_check(false, true, "PCB3_2", m, sizeof m) && strstr(m, "PCB3_3 판") != NULL && strstr(m, "잘못") != NULL);
+        ok("PCB3_3 빌드 · PA9 1 → 잘못 구움 · PCB3_2 판",
+           !board_check(true, false, "PCB3_3", m, sizeof m) && strstr(m, "PCB3_2 판") != NULL && strstr(m, "잘못") != NULL);
+        ok("가장 긴 글도 잘리지 않음 (끝 '4번)' 까지)", strlen(m) < sizeof m - 1u && strstr(m, "4번)") != NULL);
+        led_zero();
+        A.board_bad = false;
+        run_ack(30);
+        const bool before = B.led_red4 == 0;
+        app_set_board_bad(&A);
+        led_zero();
+        run_ack(35);
+        ok("판이 안 맞으면 10 s 마다 빨강 4번 · 다른 표시 안 나옴",
+           before && B.led_red4 >= 3 && B.led_green == 0 && B.led_red1 == 0 && B.led_red2 == 0 && B.led_red3 == 0);
+        A.board_bad = false;
+        led_zero();
+        run_ack(20);
+        ok("되돌리면 빨강 4번 안 나옴", B.led_red4 == 0);
     }
 
     printf("SDP810 끄기 · 켜기 (설정 04, 11/24)\n");

@@ -158,6 +158,7 @@ cmake --build build.nosync
 | `boards/pcb3_3/` | PCB3_3 | 11/24 거버 · 견적만 | J_SDP(SDP810, I2C3 0x25, 선으로) · J_TMP(DS18B20, PB13) · PA9 → GND |
 
 - `board.h`: 판 이름(`BOARD_NAME`, 켤 때 로그 첫 줄) · 있는 센서(`BOARD_HAS_SDP810` · `BOARD_HAS_DS18B20`) · `BOARD_PA9_GND`. 그 밖은 `pins.h` 를 부름.
+- 판 확인(11/25): 켤 때 PA9 를 풀업 입력으로 한 번 읽어 `BOARD_PA9_GND` 와 맞댐(PCB3_3 = 0 · PCB3_2 = 1). `HAL_PWREx_DisableUCPDDeadBattery()` 뒤에 읽음 — PA9 는 UCPD1_DB1 이라, 죽은 배터리 동작이 켜진 채 높이면 짝 핀 PB13(TEMP_DQ)에 5.1 kΩ 풀다운이 걸림. 다르면 로그 `판 확인: 빌드는 … 펌웨어 잘못 구움` 뒤 빨강 4번, 그 뒤로도 10 s 마다 빨강 4번(다른 LED 표시보다 먼저), 하던 일은 계속. 판정 글은 `Core/Inc/board_check.h`(맥 시험 7개: 판정 4가지 · 글 길이 · 10 s 빨강 4번 · 되돌림). DS18B20 이 빠지거나 다시 잡히면 로그 한 줄(`DS18B20: 값 끊김` · `다시 잡힘`).
 - `pins.h`: MCU 신호 핀. PCB3_3 것은 부품 구성 v0.29 의 U1 핀 넷과 대조해 차이 0.
 - PCB3_2 빌드는 SDP810 주소(0x25)와 PB13 을 아예 안 건드림 → 보고 24 · 26 번은 늘 0x8000. 보고 형식(v2 28 B)은 두 판 같음 — 서버 · ChirpStack 코덱은 하나.
 - 링커 스크립트는 두 판 같음: `boards/STM32H563ZGTX_FLASH.ld`.

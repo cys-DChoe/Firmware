@@ -96,7 +96,8 @@
  *   초록 1번 = 정상 (센서 읽힘 · LoRa 가입됨 · 마지막 송신 됨)
  *   빨강 1번 = 통신 문제 (키 없음 · 모듈 안 됨 · 가입 안 됨 · 마지막 송신 실패)
  *   빨강 2번 = 센서 문제 (차압 · 정압을 못 읽음 · 기압을 못 재 마지막 값으로 계산 중) — 통신 문제보다 먼저 보임
- *   빨강 3번 = 저장 문제 (1분 기록 · 누적을 저장 못 함 — 그 기록은 못 보냄) — 가장 먼저 보임 (11/18)
+ *   빨강 3번 = 저장 문제 (1분 기록 · 누적을 저장 못 함 — 그 기록은 못 보냄) — 위 둘보다 먼저 보임 (11/18)
+ *   빨강 4번 = 판과 펌웨어가 안 맞음 (켤 때 PA9 로 본 판 ≠ 빌드한 판, 11/25) — 가장 먼저 보임 · 다시 구울 때까지 계속
  *   셀이 낮아 쉴 때는 안 깜빡임 */
 /* 셀 전압 1점 보정 (보드 오면 4단계): 멀티미터로 잰 실제 전압을 주면 지금 잰 값과의 차이를 보정값으로 저장.
  * 나눔 저항 · VREFINT 오차라 크지 않음 → 이보다 크면 잘못 넣은 것으로 보고 안 받음 */
@@ -106,6 +107,7 @@
 #define APP_LED_LORA         1u
 #define APP_LED_SENSOR       2u
 #define APP_LED_STORE        3u
+#define APP_LED_BOARD        4u
 
 typedef struct {
     bool (*read)(void *ctx, meter_sample_t *s);   /* 센서 읽기, 믿을 만하면 true */
@@ -154,6 +156,7 @@ typedef struct {
     uint16_t sdp_n, probe_n;
     bool store_failed;          /* 마지막 1분 기록 · 누적 저장이 실패함 (다음 성공까지) */
     bool tx_failed;             /* 마지막 송신이 실패함 (다음 성공까지) */
+    bool board_bad;             /* 켤 때 PA9 로 본 판이 빌드한 판과 다름 (main 이 app_set_board_bad) */
     uint32_t next_led_s;
     uint8_t led_state;          /* 마지막으로 보인 APP_LED_* */
     lte_t *lte;                 /* 없으면 NULL */
@@ -204,6 +207,8 @@ bool app_zero(app_t *a);
 /* 키 넣기 (처음 설치 때 · secrets.h 에서) — 저장 뒤 다시 설정 · 가입 */
 /* 켠 까닭: abnormal = 워치독 · 오류로 재시작함 → 첫 기록에 REPORT_F_FAULT_RESET */
 void app_set_boot(app_t *a, bool abnormal);
+/* 판 확인 실패 (켤 때 PA9 ≠ 빌드): 10 s 마다 LED 빨강 4번 — 다른 표시보다 먼저 */
+void app_set_board_bad(app_t *a);
 /* 내려받은 설정 명령 처리 (포트 · 내용). 알아들었으면 true */
 bool app_downlink(app_t *a, uint8_t port, const uint8_t *data, uint8_t len);
 /* 지금 쓰는 방출 기준 Pa (설정 0 이면 기본값 = 물 20 cm) */
