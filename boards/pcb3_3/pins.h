@@ -40,7 +40,7 @@
 #define TEMP_DQ_PORT     GPIOB
 #define TEMP_DQ_PIN      GPIO_PIN_13   /* 74번 · GPIO 오픈 드레인 — DS18B20 1-Wire(TEMP_DQ → R_TMP 100 Ω → J_TMP 3번) · 3.3 V · 판 풀업 R_TMP_PU 4.7 kΩ */
 #define UCPD_DB1_PORT    GPIOA
-#define UCPD_DB1_PIN     GPIO_PIN_9   /* 101번 · 판에서 GND 에 묶음(PB13 죽은 배터리 풀다운 막기) — 출력으로 쓰지 말 것(높이면 단락), 리셋 기본(아날로그) 그대로 */
+#define UCPD_DB1_PIN     GPIO_PIN_9   /* 101번 · 판에서 GND 에 묶음(PB13 죽은 배터리 풀다운 막기) — 출력으로 쓰지 말 것(높이면 단락). 켤 때 판 확인으로 풀업 입력 1 ms 읽고 아날로그로 되돌림(main.c board_pa9_low) */
 #define ABP2_EOC_PORT    GPIOB
 #define ABP2_EOC_PIN     GPIO_PIN_14   /* 75번 · GPIO 입력 · EXTI14 — ABP2 변환 끝 · 3.3 V */
 #define DBG_TX_PORT      GPIOD

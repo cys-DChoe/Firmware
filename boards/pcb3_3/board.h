@@ -6,6 +6,6 @@
 #define BOARD_NAME          "PCB3_3"
 #define BOARD_HAS_SDP810    1   /* I2C3 에서 찾음, 없으면 SDP810_RETRY_READS 번마다 한 번 다시 찾음 */
 #define BOARD_HAS_DS18B20   1   /* PB13 오픈 드레인, 존재 펄스 없으면 "없음" */
-#define BOARD_PA9_GND       1   /* PA9 를 출력으로 쓰면 단락 — 펌웨어는 안 건드림 */
+#define BOARD_PA9_GND       1   /* PA9 를 출력으로 쓰면 단락 — 펌웨어는 켤 때 풀업 입력으로 한 번 읽어 판 확인만 함(board_check.h, 읽은 뒤 아날로그) */
 
 #include "pins.h"
