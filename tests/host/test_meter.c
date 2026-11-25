@@ -42,13 +42,32 @@ static meter_sample_t ex_sample(double dp, double pg)
     return s;
 }
 
-/* 예제 조건에서 원하는 실제 유량(m³/h)을 내는 차압 */
+/* 판정 시험을 돌릴 설정 — 처음엔 계산식 문서 예제 벤투리, 다음엔 보드 기본(벤치 벤투리 + C(Re)) (11/24 검수 4번) */
+static void (*g_cfg)(meter_cfg_t *c) = ex_cfg;
+static bool g_ex = true;
+
+/* 그 설정 · 예제 조건에서 원하는 실제 유량(m³/h)을 내는 차압 — C(Re) 면 C 가 차압 따라 바뀌어 반으로 나눠 찾음 */
+static double flow_at(const meter_cfg_t *c, double dp, double pg)
+{
+    const meter_sample_t s = ex_sample(dp, pg);
+    const double t_k = 22.0 + METER_T_STD_K;
+    const double rho = meter_gas_density(s.patm_pa + pg, t_k, c->gas_molar_kg_mol);
+    const double cd = meter_discharge_c(c, dp, rho, t_k, NULL);
+    return 3600.0 * meter_flow_m3s(dp, rho, cd, c->throat_d_m, c->inlet_d_m);
+}
+
 static double dp_for_flow(const meter_cfg_t *c, double q_m3h, double pg)
 {
-    const meter_sample_t s = ex_sample(1.0, pg);
-    const double rho = meter_gas_density(s.patm_pa + pg, 22.0 + METER_T_STD_K, c->gas_molar_kg_mol);
-    const double q1 = 3600.0 * meter_flow_m3s(1.0, rho, c->discharge_c, c->throat_d_m, c->inlet_d_m);
-    return (q_m3h / q1) * (q_m3h / q1);     /* Q ∝ √ΔP */
+    double lo = 0.0, hi = 5000.0;               /* 유량은 차압 따라 늘기만 함 (C(Re) 도 Re 따라 늘기만) */
+    for (int i = 0; i < 100; i++) {
+        const double mid = 0.5 * (lo + hi);
+        if (flow_at(c, mid, pg) < q_m3h) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    return 0.5 * (lo + hi);
 }
 
 static void run(meter_t *m, double dp, double pg, double secs, double dt, uint32_t *sec_clock)
@@ -109,7 +128,7 @@ static void test_event_example3(void)
 {
     printf("예제 3: 68분 · 0.45 m³/h 조리 → 0.51 m³ (4절)\n");
     meter_cfg_t c;
-    ex_cfg(&c);
+    g_cfg(&c);
     meter_t m;
     meter_init(&m, &c);
     uint32_t clk = 0;
@@ -146,7 +165,7 @@ static void test_depletion_example4(void)
 {
     printf("예제 4: 고갈 — P_idle 250 Pa, 조리 중 60 Pa · 0.15 m³/h 로 2분 (6절)\n");
     meter_cfg_t c;
-    ex_cfg(&c);
+    g_cfg(&c);
     meter_t m;
     meter_init(&m, &c);
     uint32_t clk = 0;
@@ -177,7 +196,7 @@ static void test_vent(void)
 {
     printf("방출 시간: 물트랩 20 cm → P_vent 1,962 Pa (7절)\n");
     meter_cfg_t c;
-    ex_cfg(&c);
+    g_cfg(&c);
     near("P_vent Pa", c.vent_p_pa, 1962.0, 0.01);
     meter_t m;
     meter_init(&m, &c);
@@ -204,7 +223,7 @@ static void test_leak_example6(void)
 {
     printf("예제 6: 누설 B — 30분 평균 차압 0.4 Pa 가 2시간 → 약 55 L/h (8절)\n");
     meter_cfg_t c;
-    ex_cfg(&c);
+    g_cfg(&c);
     meter_t m;
     meter_init(&m, &c);
     uint32_t clk = 0;
@@ -225,7 +244,11 @@ static void test_leak_example6(void)
         }
     }
     is_true("120분(구간 4개)이면 누설 판정", m.leak_active);
-    near("누설 유량 m³/h (약 55 L/h)", m.leak_flow_m3h, 0.0544, 0.002);
+    if (g_ex) {
+        near("누설 유량 m³/h (약 55 L/h)", m.leak_flow_m3h, 0.0544, 0.002);
+    } else {
+        near("누설 유량 m³/h = 0.4 Pa 를 이 벤투리 · C(Re) 로 (예제 조건)", m.leak_flow_m3h, flow_at(&c, 0.4, 300.0), 1e-9);
+    }
     is_true("잡음으로는 사용 이벤트가 안 생김", m.events.count == 0 && !m.evt_active);
 
     printf("중간에 조리가 끼면 연속이 끊김\n");
@@ -261,7 +284,7 @@ static void test_cutoff(void)
 {
     printf("잡음 컷오프 (11/17 결정: 0.05 m³/h 아래는 사용량에 안 더함)\n");
     meter_cfg_t c;
-    ex_cfg(&c);
+    g_cfg(&c);
     meter_t m;
     meter_init(&m, &c);
     /* 영점 근처 잡음: 0 · +1칸 · +2칸(0.306 Pa) 을 하루 동안 번갈아 */
@@ -413,6 +436,15 @@ int main(void)
     test_vent();
     test_leak_example6();
     test_minute_summary();
+    test_cutoff();
+
+    printf("\n== 판정 시험을 보드 기본값으로 다시 (벤치 벤투리 4 · 16 mm + C(Re), 11/24 검수 4번) ==\n");
+    g_cfg = meter_default_cfg;
+    g_ex = false;
+    test_event_example3();
+    test_depletion_example4();
+    test_vent();
+    test_leak_example6();
     test_cutoff();
     printf("\n%d / %d 통과\n", checks - fails, checks);
     return fails ? 1 : 0;

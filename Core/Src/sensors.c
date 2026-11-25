@@ -120,6 +120,7 @@ void sensors_read(sensors_t *s, sensors_result_t *r)
         r->sample.t_gas_c = b.t_c;
         r->t_board_c = b.t_c;
         s->patm_fallback_pa = b.p_pa;
+        s->patm_seen = true;
     } else {
         /* 기압은 천천히 변해서 마지막 값으로 대신해도 오차가 작음. 온도는 정압 센서 것으로 대신.
          * 한 번도 못 쟀으면 해수면 값이라 높은 곳에선 틀림 → patm_held 로 보고에 표시 */
@@ -141,9 +142,11 @@ void sensors_read(sensors_t *s, sensors_result_t *r)
         sdp810_reading_t d = {0};
         r->e_sdp = sdp810_fetch(s->bus_pg, &s->sdp, &d);
         sdp810_sleep(s->bus_pg, &s->sdp);
-        if (r->e_sdp == SENS_OK) {
+        /* 대기압 보정: 센서 자리 절대압 = 대기압 + 정압. 기압을 못 쟀으면 마지막 값(patm_held)으로 하고,
+         * 켠 뒤 한 번도 못 쟀으면 해수면 값이라 보정이 틀림 → 이번 값은 안 씀 (센서는 그래도 재움, 검수 2차) */
+        if (r->e_sdp == SENS_OK && s->patm_seen) {
             r->sample.dp2_ok = true;
-            r->sample.dp2_pa = d.dp_pa;
+            r->sample.dp2_pa = sdp810_p_comp(d.dp_pa, r->sample.patm_pa + r->sample.pg_pa);
             r->t_sdp_c = d.t_c;
         }
     }

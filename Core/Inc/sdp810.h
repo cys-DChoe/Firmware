@@ -21,6 +21,9 @@
 #define SDP810_ADDR         0x25u
 #define SDP810_MEAS_MS      50u     /* 트리거 측정 최대 50 ms */
 #define SDP810_WAKE_MS      2u      /* 잠에서 깨는 시간 */
+/* 대기압 보정 (11/24 검수 3번): SDP8xx 는 절대압 966 hPa 에서 교정됨 — 다른 절대압에선 Δp = 읽은 값 × 96,600 ÷ p_abs.
+ * Kisii(82.5 kPa)에선 안 하면 14.6 % 작게 읽힘. 벤치(102 kPa)에선 5.6 % 크게(유량 2.8 %). 원문은 SDP8xx 데이터시트 압력 보정 절 */
+#define SDP810_P_CAL_PA     96600.0
 #define SDP810_RETRY_READS  60u     /* 없으면 이만큼 읽을 때마다 한 번 다시 찾음 (조리 중 1분 · 쉴 때 10분) */
 
 typedef struct {
@@ -50,3 +53,5 @@ void sdp810_sleep(const i2c_bus_t *bus, sdp810_t *d);
 
 /* 맥 시험용 */
 uint8_t sdp810_crc8(const uint8_t *p);
+/* 대기압 보정 Δp × 96,600 ÷ p_abs. p_abs 가 30 kPa 이하(못 잼 · 이상)면 그대로 */
+double sdp810_p_comp(double dp_pa, double p_abs_pa);

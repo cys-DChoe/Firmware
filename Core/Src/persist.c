@@ -127,3 +127,47 @@ nvlog_err_t counter_save(nvlog_t *l, const counter_t *c)
     uint8_t b[PERSIST_COUNTER_LEN];
     return nvlog_save(l, b, counter_pack(c, b));
 }
+
+/* ---------- 교정값 (11/24) ---------- */
+size_t cal_pack(const cal_t *c, uint8_t *o)
+{
+    o[0] = 1u;                          /* 형식 */
+    o[1] = c->has;
+    for (unsigned k = 0; k < CAL_N; k++) {
+        uint32_t u;
+        memcpy(&u, &c->v[k], 4);
+        put_u32(o + 2 + 4 * k, u);
+    }
+    return PERSIST_CAL_LEN;
+}
+
+void cal_unpack(const uint8_t *in, cal_t *c)
+{
+    memset(c, 0, sizeof(*c));
+    if (in[0] != 1u) {
+        return;                         /* 모르는 형식이면 기본값으로 */
+    }
+    c->has = in[1];
+    for (unsigned k = 0; k < CAL_N; k++) {
+        const uint32_t u = get_u32(in + 2 + 4 * k);
+        memcpy(&c->v[k], &u, 4);
+    }
+}
+
+nvlog_err_t cal_load(const nvlog_t *l, cal_t *c)
+{
+    uint8_t b[PERSIST_CAL_LEN];
+    const nvlog_err_t e = nvlog_load(l, b, sizeof(b), NULL);
+    if (e != NVLOG_OK) {
+        memset(c, 0, sizeof(*c));
+        return e;
+    }
+    cal_unpack(b, c);
+    return NVLOG_OK;
+}
+
+nvlog_err_t cal_save(nvlog_t *l, const cal_t *c)
+{
+    uint8_t b[PERSIST_CAL_LEN];
+    return nvlog_save(l, b, cal_pack(c, b));
+}

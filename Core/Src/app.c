@@ -117,6 +117,186 @@ uint16_t app_pg_fs_pa(const app_t *a)
     return a->settings.pg_fs_pa != 0u ? a->settings.pg_fs_pa : (uint16_t)APP_PG_FS_DEFAULT_PA;
 }
 
+/* ---------- 교정값 (11/24 검수 2번) ---------- */
+
+/* 펌웨어 기본값 (meter_default_cfg) — cal_t 단위로 */
+static double cal_default(unsigned k)
+{
+    meter_cfg_t d;
+    meter_default_cfg(&d);
+    switch (k) {
+    case CAL_C_RE_A: return d.c_re_a;
+    case CAL_C_RE_B: return d.c_re_b;
+    case CAL_C_RE_MIN: return d.c_re_min;
+    case CAL_THROAT_MM: return d.throat_d_m * 1e3;
+    case CAL_INLET_MM: return d.inlet_d_m * 1e3;
+    case CAL_VISC_UPAS: return d.visc_20c_pa_s * 1e6;
+    case CAL_VISC_S_K: return d.visc_sutherland_k;
+    default: return d.gas_molar_kg_mol * 1e3;
+    }
+}
+
+static double cal_get(const cal_t *c, unsigned k)
+{
+    return (c->has & (1u << k)) ? (double)c->v[k] : cal_default(k);
+}
+
+double app_cal_value(const app_t *a, unsigned k)
+{
+    return cal_get(&a->cal, k);
+}
+
+/* 교정값을 계산 설정에 넣음. 안 넣은 칸은 기본값 그대로(double 정밀도) */
+static void cal_to_cfg(const cal_t *c, meter_cfg_t *cfg)
+{
+    cfg->c_re_a = cal_get(c, CAL_C_RE_A);
+    cfg->c_re_b = cal_get(c, CAL_C_RE_B);
+    cfg->c_re_min = cal_get(c, CAL_C_RE_MIN);
+    cfg->throat_d_m = cal_get(c, CAL_THROAT_MM) * 1e-3;
+    cfg->inlet_d_m = cal_get(c, CAL_INLET_MM) * 1e-3;
+    cfg->visc_20c_pa_s = cal_get(c, CAL_VISC_UPAS) * 1e-6;
+    cfg->visc_sutherland_k = cal_get(c, CAL_VISC_S_K);
+    cfg->gas_molar_kg_mol = cal_get(c, CAL_MOLAR_GMOL) * 1e-3;
+}
+
+/* 칸마다 범위 + 넣고 나서 식 전체가 말이 되는지 (β, Re 최소와 아주 큰 Re 에서 C 가 0.5–1.05) */
+static bool cal_ok(const cal_t *c)
+{
+    static const double lo[CAL_N] = {0.5, -5000.0, 100.0, 1.0, 3.0, 5.0, 20.0, 2.0};
+    static const double hi[CAL_N] = {1.2, 5000.0, 100000.0, 30.0, 100.0, 40.0, 600.0, 100.0};
+    for (unsigned k = 0; k < CAL_N; k++) {
+        const double v = cal_get(c, k);
+        if (!isfinite(v)) {
+            return false;
+        }
+        if (k == CAL_C_RE_A && v == 0.0) {
+            continue;                       /* a 0 = C(Re) 끔 */
+        }
+        if (v < lo[k] || v > hi[k]) {
+            return false;
+        }
+    }
+    const double beta = cal_get(c, CAL_THROAT_MM) / cal_get(c, CAL_INLET_MM);
+    if (beta < 0.05 || beta > 0.8) {
+        return false;
+    }
+    const double a = cal_get(c, CAL_C_RE_A), b = cal_get(c, CAL_C_RE_B), re_min = cal_get(c, CAL_C_RE_MIN);
+    if (a > 0.0) {
+        const double c_lo = a + b / re_min, c_hi = a + b / 1e6;
+        if (c_lo < METER_C_MIN || c_lo > METER_C_MAX || c_hi < METER_C_MIN || c_hi > METER_C_MAX) {
+            return false;
+        }
+    }
+    return true;
+}
+
+size_t app_cal_encode(const app_t *a, uint8_t o[APP_CAL_LEN])
+{
+    o[0] = 1u;
+    o[1] = a->cal.has;
+    for (unsigned k = 0; k < CAL_N; k++) {
+        const float f = (float)app_cal_value(a, k);
+        uint32_t u;
+        memcpy(&u, &f, 4);
+        o[2 + 4 * k] = (uint8_t)(u >> 24);
+        o[3 + 4 * k] = (uint8_t)(u >> 16);
+        o[4 + 4 * k] = (uint8_t)(u >> 8);
+        o[5 + 4 * k] = (uint8_t)u;
+    }
+    return APP_CAL_LEN;
+}
+
+void app_set_cal(app_t *a, nvlog_t *nv_cal)
+{
+    a->nv_cal = nv_cal;
+    memset(&a->cal, 0, sizeof(a->cal));
+    if (nv_cal != NULL) {
+        flash_on(a, true);
+        (void)cal_load(nv_cal, &a->cal);    /* 없으면 has 0 = 모두 기본값 */
+        flash_on(a, false);
+    }
+    if (!cal_ok(&a->cal)) {
+        memset(&a->cal, 0, sizeof(a->cal));  /* 저장값이 깨졌으면 기본값으로 (계산이 엉뚱해지지 않게) */
+        say(a, "교정값: 저장값이 범위 밖 — 기본값으로");
+    }
+    cal_to_cfg(&a->cal, &a->meter.cfg);
+    if (a->cal.has != 0u) {
+        char m[64];
+        snprintf(m, sizeof(m), "교정값: 넣은 칸 %02X (나머지는 기본값)", (unsigned)a->cal.has);
+        say(a, m);
+    }
+}
+
+/* 넣은 칸 표시와 넣은 칸의 값만 비교 (구조체 틈(padding)은 보지 않음 — 검수 2차) */
+static bool cal_same(const cal_t *x, const cal_t *y)
+{
+    if (x->has != y->has) {
+        return false;
+    }
+    for (unsigned k = 0; k < CAL_N; k++) {
+        if ((x->has & (1u << k)) && x->v[k] != y->v[k]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool cal_command(app_t *a, const uint8_t *d, uint8_t len)
+{
+    if (a->nv_cal == NULL) {
+        say(a, "설정: 교정값 저장 자리가 없음 — 무시");
+        return false;
+    }
+    cal_t c = a->cal;
+    if (len == 2u && d[1] == 0xFFu) {
+        a->cal_report_pending = true;       /* 보고만 */
+        return true;
+    }
+    if (len == 2u && d[1] == 0x00u) {
+        memset(&c, 0, sizeof(c));
+    } else if (len >= 6u && (len - 1u) % 5u == 0u && (len - 1u) / 5u <= CAL_N) {
+        /* 칸을 다 넣고 나서 한 번만 검사 · 적용 — 같이 바뀌는 a · b · Re 최소가 섞인 채로 계산되지 않게 */
+        for (uint8_t i = 1u; i < len; i += 5u) {
+            const uint8_t kk = d[i];
+            const uint8_t k = (uint8_t)(kk & 0x7Fu);
+            if (k < 1u || k > CAL_N) {
+                say(a, "설정: 교정값 칸 번호가 틀림 — 무시");
+                return false;
+            }
+            const uint8_t bit = (uint8_t)(1u << (k - 1u));
+            if (kk & 0x80u) {
+                c.has &= (uint8_t)~bit;      /* 이 칸만 기본값으로 */
+                c.v[k - 1u] = 0.0f;
+                continue;
+            }
+            const uint32_t u = (uint32_t)d[i + 1u] << 24 | (uint32_t)d[i + 2u] << 16 | (uint32_t)d[i + 3u] << 8 | d[i + 4u];
+            float f;
+            memcpy(&f, &u, 4);
+            c.v[k - 1u] = f;
+            c.has |= bit;
+        }
+    } else {
+        say(a, "설정: 교정값 명령 모양이 틀림 — 무시");
+        return false;
+    }
+    if (!cal_ok(&c)) {
+        say(a, "설정: 교정값 범위 밖 · C 가 0.5–1.05 를 벗어남 — 명령 전체 무시");
+        return false;
+    }
+    a->cal_report_pending = true;           /* 바뀌었든 아니든 지금 값을 올려 서버가 확인 */
+    if (cal_same(&c, &a->cal)) {
+        say(a, "설정: 교정값 같은 값 — 그대로");
+        return true;
+    }
+    a->cal = c;
+    flash_on(a, true);
+    const bool ok = cal_save(a->nv_cal, &a->cal) == NVLOG_OK;
+    flash_on(a, false);
+    cal_to_cfg(&a->cal, &a->meter.cfg);
+    say(a, ok ? "설정: 교정값 바꿈" : "설정: 교정값 바꿈 (저장 실패 — 다시 켜면 옛 값)");
+    return true;
+}
+
 bool app_downlink(app_t *a, uint8_t port, const uint8_t *d, uint8_t len)
 {
     if (port != APP_CFG_PORT || len < 1u) {
@@ -181,6 +361,9 @@ bool app_downlink(app_t *a, uint8_t port, const uint8_t *d, uint8_t len)
         say(a, ok ? (off ? "설정: SDP810 끔" : "설정: SDP810 켬")
                   : (off ? "설정: SDP810 끔 (저장 실패 — 다시 켜면 옛 값)" : "설정: SDP810 켬 (저장 실패 — 다시 켜면 옛 값)"));
         return true;
+    }
+    if (d[0] == APP_CFG_CAL) {
+        return cal_command(a, d, len);
     }
     if (d[0] == APP_CFG_LTE_TEST && len == 1u) {
         (void)app_lte_test(a);
@@ -288,6 +471,7 @@ rak_err_t app_lora_start(app_t *a)
     a->tx_live = false;
     a->tx_is_lte = false;                   /* 보내던 LTE 결과도 버림 — 남아 있으면 다음 링 기록이 '보냄' 표시를 못 받음 */
     a->tx_is_cnt = false;
+    a->tx_is_cal = false;
     rak_give_up(a->rak);                    /* 처음부터 다시: 전에 기다리던 소식은 버림 */
     /* 켤 때 셀이 이미 낮으면 가입(송신)부터 하지 않음 — 1분 보고 한 번으로 바로 쉬러 가게 */
     const uint16_t mv0 = a->hw.batt_mv != NULL ? a->hw.batt_mv(a->hw.ctx) : 0u;
@@ -451,6 +635,7 @@ static bool send_seq(app_t *a, uint32_t seq, bool resend)
     a->tx_live = true;
     a->tx_is_lte = false;
     a->tx_is_cnt = false;
+    a->tx_is_cal = false;
     a->tx_seq = seq;
     a->tx_start_s = a->hw.now_s(a->hw.ctx);
     return true;
@@ -585,8 +770,10 @@ static void lora_work(app_t *a, uint32_t now)
         a->tx_live = false;
         const bool was_lte = a->tx_is_lte;
         const bool was_cnt = a->tx_is_cnt;
+        const bool was_cal = a->tx_is_cal;
         a->tx_is_lte = false;
         a->tx_is_cnt = false;
+        a->tx_is_cal = false;
         if (a->rak->last_tx == RAK_EV_TX_DONE || a->rak->last_tx == RAK_EV_CONFIRMED_OK) {
             if (was_cnt) {
                 a->cnt_sent = a->cnt_sending;
@@ -594,7 +781,7 @@ static void lora_work(app_t *a, uint32_t now)
                 a->cnt_last_s = now;
                 a->cnt_reports++;
             }
-            if (!was_lte && !was_cnt) {
+            if (!was_lte && !was_cnt && !was_cal) {
                 flash_on(a, true);
                 ring_mark_sent(a->ring, a->tx_seq);
                 flash_on(a, false);
@@ -641,6 +828,23 @@ static void lora_work(app_t *a, uint32_t now)
             a->tx_live = true;
             a->tx_is_lte = true;
             a->tx_is_cnt = false;
+            a->tx_is_cal = false;
+            a->tx_start_s = now;
+        } else if (no_answer(se)) {
+            a->lora_misses++;
+        }
+        return;
+    }
+    if (a->cal_report_pending) {
+        uint8_t b[APP_CAL_LEN];
+        const size_t n = app_cal_encode(a, b);
+        const rak_err_t se = rak_send_start(a->rak, APP_CAL_PORT, b, n);
+        if (se == RAK_OK) {
+            a->cal_report_pending = false;
+            a->tx_live = true;
+            a->tx_is_cal = true;
+            a->tx_is_lte = false;
+            a->tx_is_cnt = false;
             a->tx_start_s = now;
         } else if (no_answer(se)) {
             a->lora_misses++;
@@ -657,6 +861,7 @@ static void lora_work(app_t *a, uint32_t now)
             a->tx_live = true;
             a->tx_is_cnt = true;
             a->tx_is_lte = false;
+            a->tx_is_cal = false;
             a->tx_start_s = now;
         } else if (no_answer(se)) {
             a->lora_misses++;

@@ -595,7 +595,13 @@ static void test_next_board_sensors(void)
     ok("세 센서 그대로 OK", r.e_dp == SENS_OK && r.e_pg == SENS_OK && r.e_baro == SENS_OK && r.usable);
     ok("SDP810: 깨우기 답 없음 1번 → 다시 시작 → 읽음", r.e_sdp == SENS_OK && r.sample.dp2_ok && x.sdp_wake_nacks == 1 &&
                                                             x.sdp_triggers == 1);
-    near("SDP810 차압 Pa (1912 ÷ 60)", r.sample.dp2_pa, 31.866667, 1e-5);
+    near("SDP810 차압 Pa (1912 ÷ 60, 대기압 보정 × 96,600 ÷ (대기압 + 정압))", r.sample.dp2_pa,
+         31.866667 * 96600.0 / (r.sample.patm_pa + r.sample.pg_pa), 1e-5);
+    ok("보정 전 값과 다름 (이 시험 기압이 966 hPa 가 아님)", fabs(r.sample.dp2_pa - 31.866667) > 0.01);
+    near("보정 식: Kisii 82,500 Pa 에서 10 Pa → 11.7091 Pa", sdp810_p_comp(10.0, 82500.0), 11.709090909, 1e-8);
+    near("보정 식: 966 hPa 에서는 그대로", sdp810_p_comp(10.0, 96600.0), 10.0, 1e-12);
+    near("보정 식: 벤치 102,040 Pa 에서 −5 Pa → −4.7334 Pa", sdp810_p_comp(-5.0, 102040.0), -4.733437868, 1e-8);
+    near("보정 식: 절대압이 30 kPa 이하(이상한 값)면 그대로", sdp810_p_comp(10.0, 20000.0), 10.0, 1e-12);
     near("SDP810 칩 온도 °C (4500 ÷ 200)", r.t_sdp_c, 22.5, 1e-9);
     ok("측정 중엔 안 물음 (이른 읽기 0)", x.sdp_early_reads == 0);
     ok("읽은 뒤 다시 잠 (잠 명령 1번)", x.sdp_asleep && x.sdp_sleeps == 1);
@@ -692,6 +698,19 @@ static void test_next_board_sensors(void)
         pg_ok = pg_ok && r.e_pg == SENS_OK && r.e_baro == SENS_OK && r.e_sdp == SENS_E_BUS && !r.sample.dp2_ok;
     }
     ok("0x25 를 한 번도 안 건드림 · 차압 2 없음 · ABP2 · BMP390 그대로", x.sdp_traffic == tr2 && pg_ok);
+    {
+        /* 켠 뒤 기압을 아직 한 번도 못 잼 → 대기압 보정을 못 해서 SDP810 값은 안 씀 (해수면 값으로 보정하면 틀림) */
+        sensors_t s3;
+        sensors_init(&s3, &dp, &pg, fake_power);
+        sensors_power_on(&s3);
+        s3.bmp_ready = false;
+        sensors_result_t r3;
+        sensors_read(&s3, &r3);
+        ok("기압 못 잰 첫 읽기: 기압은 해수면 대신 값 · SDP810 값은 안 씀", r3.sample.patm_held && !r3.sample.dp2_ok);
+        s3.bmp_ready = true;
+        sensors_read(&s3, &r3);
+        ok("기압을 한 번 재면 SDP810 값을 씀", !r3.sample.patm_held && r3.sample.dp2_ok);
+    }
 }
 
 static void test_i2c_timing(void)

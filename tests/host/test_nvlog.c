@@ -183,6 +183,28 @@ int main(void)
         settings_save(&ls2, &w);
     }
 
+    printf("교정값 칸 (11/24) — 34 B · 형식 1 · 외부 플래시 자리\n");
+    {
+        ok("교정값 자리가 계수 자리 뒤 (겹치지 않음)", PERSIST_CAL_BASE >= PERSIST_COUNTER_BASE + 2u * W25Q_SECTOR);
+        cal_t w = {0};
+        w.has = 0x09u;
+        w.v[CAL_C_RE_A] = 0.95f;
+        w.v[CAL_THROAT_MM] = 4.1f;
+        uint8_t b[PERSIST_CAL_LEN];
+        ok("34 B", cal_pack(&w, b) == 34u && b[0] == 1u && b[1] == 0x09u);
+        cal_t r;
+        cal_unpack(b, &r);
+        ok("풀면 같은 값", r.has == 0x09u && r.v[CAL_C_RE_A] == 0.95f && r.v[CAL_THROAT_MM] == 4.1f);
+        b[0] = 2u;
+        cal_unpack(b, &r);
+        ok("모르는 형식이면 넣은 칸 없음(기본값)", r.has == 0u);
+        nvlog_t lcal;
+        ok("저장 · 다시 읽기", nvlog_mount(&lcal, &OPS, PERSIST_CAL_BASE) == NVLOG_OK && cal_save(&lcal, &w) == NVLOG_OK);
+        nvlog_t lcal2;
+        nvlog_mount(&lcal2, &OPS, PERSIST_CAL_BASE);
+        ok("다시 켜서 읽은 값 = 저장한 값", cal_load(&lcal2, &r) == NVLOG_OK && r.has == 0x09u && r.v[CAL_THROAT_MM] == 4.1f);
+    }
+
     printf("계수 1분마다 저장 — 섹터 넘김 (섹터당 64칸)\n");
     for (uint32_t i = 0; i < 150; i++) {
         counter_t x = ctr(i);

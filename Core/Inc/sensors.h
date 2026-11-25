@@ -38,6 +38,7 @@ typedef struct {
     uint8_t bmp_retry_n;            /* 설정 안 된 채 읽은 횟수 (다시 설정해 볼 때까지) */
     uint32_t bmp_reinits;           /* 다시 설정해서 살아난 횟수 (로그용) */
     double patm_fallback_pa;        /* 기압 센서 실패 때 쓸 값 (마지막 정상값, 처음엔 해수면 101,325 Pa) */
+    bool patm_seen;                 /* 켠 뒤 기압을 한 번이라도 잼 — 아직이면 SDP810 대기압 보정을 못 해서 그 값은 안 씀 */
     /* 다음 판 센서 */
     sdp810_t sdp;
     bool sdp_off;                   /* true = SDP810 헤더 없는 판(board.h BOARD_HAS_SDP810 0) → 0x25 를 아예 안 건드림 */

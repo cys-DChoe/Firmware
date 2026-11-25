@@ -41,6 +41,18 @@
 /*   04 vv : SDP810 끄기 · 켜기 (vv 00 = 끔, 01 = 켬). PCB3_3 비교 시험이 끝나면 꺼서 전류를 아낌(설계서 판 구분 3번, 11/24).
  *   받으면 바로 적용 · 저장, 같은 값이면 다시 저장 안 함. 판에 SDP810 자리가 없으면(PCB3_2) 저장만 하고 늘 꺼진 그대로 */
 #define APP_CFG_SDP          0x04u
+/*   05 kk vvvvvvvv [kk vvvvvvvv …] : 교정값 칸 kk 에 float32(큰 쪽 먼저), 한 명령에 1–8칸 — 계량기 한 대마다
+ *     (11/24 검수 2번, persist.h cal_t). 같이 바뀌어야 하는 a · b · Re 최소는 한 명령에 담아 보낼 것(검수 2차 중간)
+ *     01 a (C = a + b ÷ Re, 0 = 고정 C 0.97) · 02 b · 03 Re 최소(아래는 끝 값) · 04 목 지름 mm · 05 입구 지름 mm
+ *     06 가스 점성 20 °C µPa·s · 07 Sutherland S K · 08 가스 분자량 g/mol
+ *     kk 에 80 을 더하면(81–88) 그 칸만 펌웨어 기본값으로 (값 4 B 는 아무거나)
+ *   05 00 : 교정값을 모두 펌웨어 기본값으로 · 05 FF : 지금 값만 보고
+ *   다 넣은 뒤 한 번만 검사: 범위 밖 · C 가 0.5–1.05 를 벗어나면 명령 전체를 무시. 받으면 바로 적용 · 저장(외부 플래시),
+ *   결과는 포트 4 로 올림. LoRa 한 번에 41 B — KR920 · EU868 가장 느린 속도(51 B)에도 들어감 */
+#define APP_CFG_CAL          0x05u
+/* 교정값 보고 (포트 4, 34 B): 형식 1 · 넣은 칸 표시(비트 k = 칸 k+1) · 지금 쓰는 값 8개 float32 큰 쪽 먼저(칸 01–08 순서) */
+#define APP_CAL_PORT         4u
+#define APP_CAL_LEN          34u
 /* LTE 1차 (설계서 5번): 켜고 · 망 등록 확인 · 끄기만. 셀 3.6 V 미만이면 안 함(펌웨어 주의 1절, 0.05 V 여유 → 3.65 V).
  * 결과는 LoRa 포트 2 로 7 바이트 (lte_result_encode) — 1분 보고 링에는 안 넣음 */
 #define APP_LTE_PORT         2u
@@ -114,6 +126,8 @@ typedef struct {
     meter_t meter;
     ring_t *ring;
     nvlog_t *nv_set, *nv_ctr;
+    nvlog_t *nv_cal;            /* 교정값 (외부 플래시, 없으면 NULL — 명령 05 거절) */
+    cal_t cal;
     rak_t *rak;
     settings_t settings;
     counter_t counter;
@@ -143,6 +157,8 @@ typedef struct {
     lte_t *lte;                 /* 없으면 NULL */
     bool lte_want;              /* LTE 시험을 받아 둠 — 다음 app_step 에서 시작 (그때의 up_s 로 재려고) */
     bool lte_report_pending;    /* LTE 시험 결과를 LoRa 로 올릴 차례 */
+    bool cal_report_pending;    /* 교정값 보고(포트 4)를 올릴 차례 */
+    bool tx_is_cal;             /* 지금 보내는 것이 교정값 보고 (링 기록 아님) */
     bool tx_is_lte;             /* 지금 보내는 것이 LTE 결과 (링 기록 아님) */
     bool tx_is_cnt;             /* 지금 보내는 것이 횟수 보고 (링 기록 아님) */
     report_counts_t cnt_sent;   /* 마지막으로 보내진 횟수 */
@@ -194,6 +210,10 @@ double app_vent_p_pa(const app_t *a);
 uint16_t app_pg_fs_pa(const app_t *a);
 /* LTE 모듈 연결 · 시험 받기 (셀 3.65 V 이상일 때만, 하는 중이면 false). 실제 시작은 다음 app_step 에서 */
 void app_set_lte(app_t *a, lte_t *lte);
+/* 교정값 자리 연결 · 읽어서 계산에 적용 (app_init 뒤에) */
+void app_set_cal(app_t *a, nvlog_t *nv_cal);
+double app_cal_value(const app_t *a, unsigned k);          /* 지금 쓰는 값 (넣은 값 또는 기본값, cal_t 단위) */
+size_t app_cal_encode(const app_t *a, uint8_t out[APP_CAL_LEN]);
 bool app_lte_test(app_t *a);
 bool app_set_keys(app_t *a, const uint8_t dev_eui[8], const uint8_t app_eui[8], const uint8_t app_key[16]);
 /* 셀 전압 보정: actual_mv = 멀티미터로 잰 셀 전압. 지금 잰 값과 맞도록 보정값을 고쳐 저장 (다시 켜도 유지).

@@ -88,3 +88,8 @@ void sdp810_sleep(const i2c_bus_t *bus, sdp810_t *d)
     d->started = false;
     (void)bus->write(bus->ctx, SDP810_ADDR, CMD_SLEEP, sizeof(CMD_SLEEP));
 }
+
+double sdp810_p_comp(double dp_pa, double p_abs_pa)
+{
+    return p_abs_pa > 30000.0 ? dp_pa * SDP810_P_CAL_PA / p_abs_pa : dp_pa;
+}

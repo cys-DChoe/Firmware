@@ -10,6 +10,7 @@ tests/host/run.sh 가 C 가 묶은 값을 이걸로 풀어 맞는지 확인함.
     python3 tools/report_decode.py 0101020...      # 16진 문자열 하나 풀기
     python3 tools/report_decode.py --selftest FILE # 시험 벡터 대조
     python3 tools/report_decode.py --counts 01...  # 포트 3 횟수 보고 풀기
+    python3 tools/report_decode.py --cal 01...     # 포트 4 교정값 보고 풀기 (11/24)
 """
 import struct
 import sys
@@ -85,6 +86,24 @@ def decode_counts(buf: bytes) -> dict:
     return {"seq": seq, "cooking": cooking, "depletions": depl, "vent_minutes": vent, "leaks": leaks}
 
 
+CAL_LEN = 34
+CAL_NAMES = ["c_re_a", "c_re_b", "c_re_min", "throat_mm", "inlet_mm", "visc_upas", "visc_s_k", "molar_gmol"]
+
+
+def decode_cal(buf: bytes) -> dict:
+    """포트 4 교정값 보고 (34 B): 형식 1 · 넣은 칸 표시(비트 k = 칸 k+1) · 지금 쓰는 값 8개 float32 큰 쪽 먼저.
+    펌웨어 Core/Inc/app.h APP_CFG_CAL · 설정 명령 05 를 받을 때마다 옴. 넣지 않은 칸은 펌웨어 기본값."""
+    if len(buf) != CAL_LEN:
+        raise ValueError(f"길이가 {len(buf)} 바이트임 ({CAL_LEN} 여야 함)")
+    if buf[0] != 1:
+        raise ValueError(f"모르는 형식 버전 {buf[0]}")
+    vals = struct.unpack(">8f", buf[2:])
+    d = dict(zip(CAL_NAMES, vals))
+    d["set_fields"] = [n for k, n in enumerate(CAL_NAMES) if buf[1] & (1 << k)]
+    d["has"] = buf[1]
+    return d
+
+
 def selftest(path: str) -> int:
     keys = ["seq", "unix_s", "total_nm3", "flow_nm3h", "pg_pa", "dp_pa", "t_c", "patm_pa", "batt_mv", "flags",
             "sdp810_pa", "ds18b20_c"]
@@ -92,6 +111,19 @@ def selftest(path: str) -> int:
     for line in open(path, encoding="utf-8"):
         line = line.strip()
         if not line:
+            continue
+        if line.startswith("K:"):
+            hexs, has, *vals = line[2:].split("|")
+            got = decode_cal(bytes.fromhex(hexs))
+            n += 1
+            if got["has"] != int(has):
+                bad += 1
+                print(f"  FAIL 교정값 넣은 칸: 파이썬 {got['has']} / C {has}")
+            for k, v in zip(CAL_NAMES, map(float, vals)):
+                n += 1
+                if abs(got[k] - v) > 1e-6 * max(1.0, abs(v)):     # float32 로 보냄
+                    bad += 1
+                    print(f"  FAIL 교정값 {k}: 파이썬 {got[k]} / C {v}  ({hexs})")
             continue
         if line.startswith("C:"):
             hexs, *vals = line[2:].split("|")
@@ -125,6 +157,10 @@ def selftest(path: str) -> int:
 if __name__ == "__main__":
     if len(sys.argv) == 3 and sys.argv[1] == "--selftest":
         sys.exit(selftest(sys.argv[2]))
+    if len(sys.argv) == 3 and sys.argv[1] == "--cal":
+        for k, v in decode_cal(bytes.fromhex(sys.argv[2])).items():
+            print(f"{k:12s} {v}")
+        sys.exit(0)
     if len(sys.argv) == 3 and sys.argv[1] == "--counts":
         for k, v in decode_counts(bytes.fromhex(sys.argv[2])).items():
             print(f"{k:12s} {v}")

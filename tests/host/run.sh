@@ -45,7 +45,13 @@ echo "\n== 전체 흐름 (센서 → 계산 → 저장 → LoRa)"
 cc $CFLAGS -Itests/host -o "$OUT/test_app" Core/Src/app.c Core/Src/meter.c Core/Src/report.c Core/Src/ring.c Core/Src/w25q.c \
    Core/Src/nvlog.c Core/Src/persist.c Core/Src/nv_w25q.c Core/Src/rak3172.c Core/Src/lowpower.c Core/Src/lte.c \
    tests/host/fake_w25q.c tests/host/fake_rak.c tests/host/fake_lte.c tests/host/test_app.c -lm
-"$OUT/test_app"
+"$OUT/test_app" "$OUT/cal_vectors.txt"
+python3 tools/report_decode.py --selftest "$OUT/cal_vectors.txt"
+if command -v node >/dev/null; then
+  node tools/codec_selftest.js bench/nucleo_lora/chirpstack_codec.js "$OUT/cal_vectors.txt"
+else
+  echo "  (node 없음 — ChirpStack 코덱 대조 건너뜀)"
+fi
 
 echo "\n== 셀 전압 계산"
 cc $CFLAGS -o "$OUT/test_batt" Core/Src/batt.c tests/host/test_batt.c

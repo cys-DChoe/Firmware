@@ -41,6 +41,8 @@ static flash_spi_t s_flash;
 static ring_t s_ring;
 static flash_ops_t s_nv_ops;
 static nvlog_t s_nv_set, s_nv_ctr;
+static flash_ops_t s_cal_ops;          /* 교정값 — 외부 플래시 */
+static nvlog_t s_nv_cal;
 static rak_t s_rak;
 static lte_t s_lte;
 static app_t s_app;
@@ -278,12 +280,22 @@ int main(void)
         Error_Handler();
     }
     printf("링: 다음 순번 %lu\n", (unsigned long)s_ring.next_seq);
+    /* 교정값: 늘 외부 플래시 (persist.h PERSIST_CAL_BASE). 플래시가 깨어 있는 지금 엶 —
+     * app_init 은 끝에서 플래시를 깊은 잠으로 보내서, 그 뒤에 열면 잠든 칩을 읽어 빈 자리로 보임 (11/24 검수 2차 높음) */
+    nv_w25q_ops(&s_cal_ops, &s_flash.dev);
+    const bool cal_ok = nvlog_mount(&s_nv_cal, &s_cal_ops, PERSIST_CAL_BASE) == NVLOG_OK;
 
     wdg_kick();
 
     /* 4) 계산 · 저장값 되살리기 */
     app_init(&s_app, &HW, &s_ring, &s_nv_set, &s_nv_ctr, &s_rak);
     app_set_boot(&s_app, wdg_abnormal(&boot));
+    if (cal_ok) {
+        app_set_cal(&s_app, &s_nv_cal);     /* 읽을 땐 app 이 플래시를 깨움 */
+    } else {
+        app_set_cal(&s_app, NULL);
+        printf("교정값 자리 못 엶 — 기본값으로 (설정 05 안 됨)\n");
+    }
 #ifdef SECRETS_HAVE_LORA_KEYS
     app_set_keys(&s_app, SECRET_DEV_EUI, SECRET_APP_EUI, SECRET_APP_KEY);
 #endif

@@ -61,6 +61,9 @@ static void b_flash(void *ctx, bool on)
 {
     if (on) {
         ((board_t *)ctx)->flash_on_calls++;
+        (void)w25q_init(&DEV);                     /* 보드 hw_flash 와 같게 실제로 깨우고 재움 (11/24 검수 2차) */
+    } else {
+        (void)w25q_sleep(&DEV);
     }
 }
 static void b_log(void *ctx, const char *m)
@@ -112,19 +115,78 @@ static const app_hw_t HW = {b_read, b_now, b_time, b_batt, b_flash, b_log, &B, b
 static fake_lte_t FL;
 static lte_t LT;
 static ring_t RING;
-static nvlog_t NS, NC;
+static nvlog_t NS, NC, NCAL;
 static flash_ops_t OPS;
 static app_t A;
 
 /* 전원을 껐다 켠 것처럼: 플래시 내용은 그대로, 나머지는 새로 */
 static void boot(void)
 {
+    (void)w25q_init(&DEV);                         /* main 처럼: 켤 때 플래시를 깨우고 시작 */
     ring_mount(&RING, &DEV, 0, 4);                 /* 시험용으로 링을 4섹터(512칸)로 */
     nv_w25q_ops(&OPS, &DEV);
     nvlog_mount(&NS, &OPS, PERSIST_SETTINGS_BASE);
     nvlog_mount(&NC, &OPS, PERSIST_COUNTER_BASE);
+    nvlog_mount(&NCAL, &OPS, PERSIST_CAL_BASE);    /* main 처럼 app_init 앞 (그 뒤엔 플래시가 잠듦) */
     app_init(&A, &HW, &RING, &NS, &NC, &R);
+    app_set_cal(&A, &NCAL);
     app_set_lte(&A, &LT);
+}
+
+/* 설정 05 kk vvvvvvvv 만들기 (float32 큰 쪽 먼저) */
+static void cal_cmd(uint8_t out[6], uint8_t k, float v)
+{
+    uint32_t u;
+    memcpy(&u, &v, 4);
+    out[0] = APP_CFG_CAL;
+    out[1] = k;
+    out[2] = (uint8_t)(u >> 24);
+    out[3] = (uint8_t)(u >> 16);
+    out[4] = (uint8_t)(u >> 8);
+    out[5] = (uint8_t)u;
+}
+
+/* 여러 칸 한 명령: out = 05 + (kk f32)×n, 길이 돌려줌 */
+static uint8_t cal_multi(uint8_t *out, const uint8_t *ks, const float *vs, int n)
+{
+    out[0] = APP_CFG_CAL;
+    for (int i = 0; i < n; i++) {
+        uint8_t one[6];
+        cal_cmd(one, ks[i], vs[i]);
+        memcpy(out + 1 + 5 * i, one + 1, 5);
+    }
+    return (uint8_t)(1 + 5 * n);
+}
+
+/* 교정값 보고 시험 벡터 — run.sh 가 파이썬(tools/report_decode.py) · ChirpStack 코덱으로 풀어 맞대 봄 (검수 2차 낮음) */
+static FILE *g_vec;
+static void dump_cal(void)
+{
+    if (g_vec == NULL) {
+        return;
+    }
+    uint8_t b[APP_CAL_LEN];
+    app_cal_encode(&A, b);
+    fprintf(g_vec, "K:");
+    for (unsigned i = 0; i < APP_CAL_LEN; i++) {
+        fprintf(g_vec, "%02X", b[i]);
+    }
+    fprintf(g_vec, "|%u", (unsigned)A.cal.has);
+    for (unsigned k = 0; k < CAL_N; k++) {
+        fprintf(g_vec, "|%.9g", app_cal_value(&A, k));
+    }
+    fprintf(g_vec, "\n");
+}
+
+static const char *last_send(const char *prefix)
+{
+    const char *hit = NULL;
+    for (int i = 0; i < F.nlog; i++) {
+        if (strncmp(F.log[i], prefix, strlen(prefix)) == 0) {
+            hit = F.log[i];
+        }
+    }
+    return hit;
 }
 
 /* 앱이 돌려준 간격대로 시간을 흘리며 돌림 */
@@ -160,9 +222,17 @@ static void run_ack(uint32_t secs)
     }
 }
 
+/* 시험이 플래시를 직접 볼 때는 먼저 깨움 — 앱은 일이 끝나면 플래시를 재움 (보드와 같음) */
+static void wake(void) { (void)w25q_init(&DEV); }
+static ring_err_t t_find_unsent(uint32_t back, uint32_t *seq) { wake(); return ring_find_unsent(&RING, back, seq); }
+static ring_err_t t_ring_read(uint32_t seq, ring_rec_t *rec) { wake(); return ring_read(&RING, seq, rec); }
+static w25q_err_t t_erase(uint32_t addr) { wake(); return w25q_erase_sector(&DEV, addr); }
+static ring_err_t t_ring_append(const uint8_t *rep, uint32_t *seq) { wake(); return ring_append(&RING, rep, seq); }
+
 static bool last_report(report_t *r)
 {
     ring_rec_t rec;
+    wake();
     return ring_last(&RING, &rec) == RING_OK && report_decode(rec.report, RING_REPORT_SIZE, r);
 }
 
@@ -171,8 +241,9 @@ static const uint8_t APP_EUI[8] = {0, 0, 0, 0, 0, 0, 0, 1};
 static const uint8_t APP_KEY[16] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
                                     0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
 
-int main(void)
+int main(int argc, char **argv)
 {
+    g_vec = argc > 1 ? fopen(argv[1], "w") : NULL;
     chip_new();
     fresh();
     memset(&B, 0, sizeof(B));
@@ -202,12 +273,12 @@ int main(void)
     ok("가스 안 쓸 땐 10초마다 깸", app_step(&A) == 10000u);
     ok("LED: 키가 없으면 10 s 마다 빨강 1번 (초록 없음)", B.led_red1 >= 18 && B.led_green == 0 && B.led_red2 == 0);
     uint32_t seq;
-    ok("세 개 모두 아직 안 보냄", ring_find_unsent(&RING, 60, &seq) == RING_OK && seq == 0);
+    ok("세 개 모두 아직 안 보냄", t_find_unsent(60, &seq) == RING_OK && seq == 0);
     {
         ring_rec_t rec0;
         report_t r0;
         ok("켠 뒤 첫 기록에만 '켬' 비트 (이상 재시작 비트는 없음)",
-           ring_read(&RING, 0, &rec0) == RING_OK && report_decode(rec0.report, RING_REPORT_SIZE, &r0) &&
+           t_ring_read(0, &rec0) == RING_OK && report_decode(rec0.report, RING_REPORT_SIZE, &r0) &&
                (r0.flags & REPORT_F_BOOT) && !(r0.flags & REPORT_F_FAULT_RESET) && !(r.flags & REPORT_F_BOOT));
     }
 
@@ -237,7 +308,7 @@ int main(void)
     }
     ok("가입됨", R.joined);
     ok("보낸 게 있고 보낸 표시가 링에 남음", A.sent >= 3 && A.resends >= 3);
-    ok("최근 기록 중 못 보낸 것 없음", ring_find_unsent(&RING, 60, &seq) == RING_E_MISSING);
+    ok("최근 기록 중 못 보낸 것 없음", t_find_unsent(60, &seq) == RING_E_MISSING);
     int sends = 0, len_ok = 0;
     for (int i = 0; i < F.nlog; i++) {
         if (strncmp(F.log[i], "AT+SEND=1:", 10) == 0) {
@@ -267,8 +338,8 @@ int main(void)
     ok("보고 순번 · 링 순번 이어짐", A.counter.report_seq == next_report && RING.next_seq == ring_next);
 
     printf("누적 저장 영역이 망가졌을 때 → 링 마지막 보고로 되살림\n");
-    w25q_erase_sector(&DEV, PERSIST_COUNTER_BASE);
-    w25q_erase_sector(&DEV, PERSIST_COUNTER_BASE + W25Q_SECTOR);
+    t_erase(PERSIST_COUNTER_BASE);
+    t_erase(PERSIST_COUNTER_BASE + W25Q_SECTOR);
     boot();
     ok("누적 = 링 마지막 보고 값 (0.1 L 안)", fabs(A.meter.total_nm3 - total) < 0.0001 + 1e-9);
     ok("보고 순번도 이어짐", A.counter.report_seq == next_report);
@@ -286,7 +357,7 @@ int main(void)
         uint8_t bytes[REPORT_LEN];
         report_encode(&rr, bytes);
         uint32_t rseq;
-        ring_append(&RING, bytes, &rseq);           /* 누적 저장은 안 함 = 그 사이 끊김 */
+        t_ring_append(bytes, &rseq);           /* 누적 저장은 안 함 = 그 사이 끊김 */
         boot();
         ok("누적 = 링 값 (0.1 L 안) · 다음 보고 순번 이어짐",
            fabs(A.meter.total_nm3 - (t0 + 0.0123)) < 0.0001 + 1e-9 && A.counter.report_seq == (uint16_t)(rs0 + 1u));
@@ -308,7 +379,7 @@ int main(void)
         uint8_t bytes[REPORT_LEN];
         report_encode(&rr, bytes);
         uint32_t rseq;
-        ring_append(&RING, bytes, &rseq);
+        t_ring_append(bytes, &rseq);
         boot();
         ok("다음 보고 순번이 겹치지 않음", A.counter.report_seq == (uint16_t)(rs0 + 1u));
         ok("누적은 줄지 않음 (저장값 그대로)", A.meter.total_nm3 == t0);
@@ -324,7 +395,7 @@ int main(void)
         ring_rec_t rb;
         report_t r1;
         ok("다음 첫 기록에 '켬' + '이상 재시작' 비트, 그다음 기록엔 없음",
-           ring_read(&RING, RING.next_seq - 2u, &rb) == RING_OK && report_decode(rb.report, RING_REPORT_SIZE, &r1) &&
+           t_ring_read(RING.next_seq - 2u, &rb) == RING_OK && report_decode(rb.report, RING_REPORT_SIZE, &r1) &&
                (r1.flags & REPORT_F_BOOT) && (r1.flags & REPORT_F_FAULT_RESET) && last_report(&r) &&
                !(r.flags & (REPORT_F_BOOT | REPORT_F_FAULT_RESET)));
     }
@@ -447,7 +518,7 @@ int main(void)
     ok("60 s 쯤에 기다림을 풂 (영영 안 멈춤)", first_free >= 50u && first_free <= 75u && A.send_fail > fail0);
     ok("3번 놓치자 모듈 리셋 → 설정 · 가입 다시", A.tx_timeouts == to0 + 3 && A.lora_restarts == rs0 + 1 &&
                                                     F.resets > (int)resets0 && A.lora_ready && R.joining && A.joins > joins0);
-    ok("못 보낸 기록은 링에 남아 있음", ring_find_unsent(&RING, 60, &seq) == RING_OK);
+    ok("못 보낸 기록은 링에 남아 있음", t_find_unsent(60, &seq) == RING_OK);
 
     printf("가입 결과가 안 옴 → 300 s 뒤 풀고 10분 간격 다시 가입\n");
     const uint32_t j0 = A.joins, tj = B.now;
@@ -602,7 +673,7 @@ int main(void)
         push(&F, "+EVT:JOINED\r\n");
         run_ack(3 * 60);
         uint32_t useq;
-        ok("그 뒤 기록들은 모두 '보냄'", ring_find_unsent(&RING, 3, &useq) != RING_OK);
+        ok("그 뒤 기록들은 모두 '보냄'", t_find_unsent(3, &useq) != RING_OK);
     }
 
     printf("켤 때 셀이 이미 낮음 → 가입 안 하고 1분 안에 쉼\n");
@@ -746,7 +817,7 @@ int main(void)
     {
         run_for(3 * 60);                            /* 송신 끝 소식을 안 줌 → 링에 못 보낸 기록이 쌓임 */
         uint32_t unsent;
-        ok("못 보낸 기록이 있음", ring_find_unsent(&RING, APP_RESEND_WINDOW, &unsent) == RING_OK);
+        ok("못 보낸 기록이 있음", t_find_unsent(APP_RESEND_WINDOW, &unsent) == RING_OK);
         B.batt = 3240;
         bool seen = false;
         uint32_t s0 = 0, r0 = 0, t0 = 0;
@@ -866,6 +937,102 @@ int main(void)
         ok("04 01 → 켬", app_downlink(&A, APP_CFG_PORT, on, 2) && B.sdp_on && !A.settings.sdp_off);
         boot();
         ok("다시 켜면 켜진 그대로 · 다른 설정(정압 만점) 그대로", B.sdp_on && B.pg_fs == (double)app_pg_fs_pa(&A));
+    }
+
+    printf("교정값 (설정 05, 결과는 포트 4 — 11/24 검수 2번)\n");
+    {
+        ok("처음엔 넣은 칸 없음 · 기본값(목 4 mm, a 0.97739)", A.cal.has == 0u && A.meter.cfg.throat_d_m == 4.0e-3 &&
+                                                              app_cal_value(&A, CAL_C_RE_A) == 0.97739);
+        dump_cal();
+        uint8_t c6[6];
+        cal_cmd(c6, 1, 2.0f);
+        ok("a 2.0 은 범위 밖 → 무시", !app_downlink(&A, APP_CFG_PORT, c6, 6) && A.cal.has == 0u);
+        cal_cmd(c6, 2, -1000.0f);
+        ok("b −1000 은 Re 최소에서 C 0.40 → 무시", !app_downlink(&A, APP_CFG_PORT, c6, 6) && A.cal.has == 0u);
+        cal_cmd(c6, 5, 4.5f);
+        ok("입구 4.5 mm 는 β 0.89 → 무시", !app_downlink(&A, APP_CFG_PORT, c6, 6) && A.cal.has == 0u);
+        cal_cmd(c6, 9, 1.0f);
+        ok("없는 칸 09 → 무시", !app_downlink(&A, APP_CFG_PORT, c6, 6));
+        const uint8_t bad_len[3] = {APP_CFG_CAL, 0x01, 0x3F};
+        ok("길이 틀림 → 무시", !app_downlink(&A, APP_CFG_PORT, bad_len, 3));
+
+        B.batt = 3700;
+        app_lora_start(&A);                        /* 앞 시험이 다시 켜서(boot) LoRa 가 안 켜진 상태 — 켜고 가입 */
+        push(&F, "+EVT:JOINED\r\n");
+        F.joined = true;
+        run_ack(2 * 60);                           /* 밀린 1분 보고부터 보냄 */
+        F.nlog = 0;
+        const uint32_t saves = NCAL.next_seq;
+        cal_cmd(c6, 4, 4.1f);
+        ok("05 04 4.1 → 목 4.1 mm 바로 적용 · 저장",
+           app_downlink(&A, APP_CFG_PORT, c6, 6) && fabs(A.meter.cfg.throat_d_m - 4.1e-3) < 1e-9 && A.cal.has == 0x08u &&
+               NCAL.next_seq == saves + 1u && A.cal_report_pending);
+        ok("다른 칸은 기본값 그대로", A.meter.cfg.inlet_d_m == 16.0e-3 && A.meter.cfg.c_re_a == 0.97739);
+        dump_cal();
+        run_ack(60);
+        const char *s4 = last_send("AT+SEND=4:");
+        ok("포트 4 로 34 B 보고 한 번 · 형식 01 · 넣은 칸 08 · 목 칸 = 4.1 (40833333)",
+           count_writes("AT+SEND=4:") == 1 && !A.cal_report_pending && s4 != NULL && strlen(s4) == 10u + 68u &&
+               strncmp(s4 + 10, "0108", 4) == 0 && strncmp(s4 + 10 + 4 + 3 * 8, "40833333", 8) == 0);
+        ok("교정값 보고는 링 기록이 아님 (다음 1분 보고 · 보냄 표시는 그대로)", !A.tx_is_cal);
+
+        const uint32_t s1 = NCAL.next_seq;
+        ok("같은 값 → 저장 안 함 · 보고는 다시", app_downlink(&A, APP_CFG_PORT, c6, 6) && NCAL.next_seq == s1 &&
+                                                     A.cal_report_pending);
+        run_ack(60);
+        boot();
+        ok("다시 켜도 목 4.1 mm", fabs(A.meter.cfg.throat_d_m - 4.1e-3) < 1e-9 && A.cal.has == 0x08u);
+        cal_cmd(c6, 1, 0.0f);
+        ok("a 0 → C(Re) 끔 (고정 C)", app_downlink(&A, APP_CFG_PORT, c6, 6) && A.meter.cfg.c_re_a == 0.0 &&
+                                         meter_discharge_c(&A.meter.cfg, 50.0, 1.0, 298.15, NULL) == 0.97);
+        const uint8_t ask[2] = {APP_CFG_CAL, 0xFF};
+        A.cal_report_pending = false;
+        const uint32_t s2 = NCAL.next_seq;
+        ok("05 FF → 보고만 (저장 안 함)", app_downlink(&A, APP_CFG_PORT, ask, 2) && A.cal_report_pending &&
+                                            NCAL.next_seq == s2);
+        printf("교정값 여러 칸을 한 명령에 (검수 2차 중간)\n");
+        {
+            uint8_t mc[41];
+            const uint8_t k1[1] = {2};
+            const float v1[1] = {-1500.0f};
+            cal_cmd(c6, 1, 0.97739f);
+            (void)app_downlink(&A, APP_CFG_PORT, c6, 6);   /* a 다시 켬 */
+            const uint8_t has0 = A.cal.has;
+            ok("b −1500 혼자는 Re 최소 1725 에서 C 0.11 → 무시",
+               !app_downlink(&A, APP_CFG_PORT, mc, cal_multi(mc, k1, v1, 1)) && A.cal.has == has0);
+            const uint8_t k3[3] = {1, 2, 3};
+            const float v3[3] = {0.97739f, -1500.0f, 5000.0f};
+            ok("a · b · Re 최소 5000 을 한 명령에 → C 0.68–0.98 로 받음 · 한 번에 적용",
+               app_downlink(&A, APP_CFG_PORT, mc, cal_multi(mc, k3, v3, 3)) && A.meter.cfg.c_re_b == -1500.0 &&
+                   A.meter.cfg.c_re_min == 5000.0 && (A.cal.has & 0x07u) == 0x07u);
+            dump_cal();
+            const uint8_t kb[3] = {4, 9, 5};
+            const float vb[3] = {4.2f, 1.0f, 18.0f};
+            const double th = A.meter.cfg.throat_d_m;
+            ok("중간에 없는 칸(09)이 있으면 명령 전체 무시 (앞 칸도 안 바뀜)",
+               !app_downlink(&A, APP_CFG_PORT, mc, cal_multi(mc, kb, vb, 3)) && A.meter.cfg.throat_d_m == th);
+            const uint8_t k7[1] = {0x83};
+            const float v7[1] = {0.0f};
+            const uint8_t k8[2] = {0x82, 0x83};
+            const float v8[2] = {0.0f, 0.0f};
+            ok("83 → Re 최소만 기본값 … 그러면 b −1500 이 1725 에서 C 0.11 이라 무시",
+               !app_downlink(&A, APP_CFG_PORT, mc, cal_multi(mc, k7, v7, 1)) && A.meter.cfg.c_re_min == 5000.0);
+            ok("82 · 83 같이 → b · Re 최소 기본값, 목 4.1 mm 는 그대로",
+               app_downlink(&A, APP_CFG_PORT, mc, cal_multi(mc, k8, v8, 2)) && A.meter.cfg.c_re_b == -158.91 &&
+                   A.meter.cfg.c_re_min == 1725.0 && (A.cal.has & 0x06u) == 0u && fabs(A.meter.cfg.throat_d_m - 4.1e-3) < 1e-9);
+            const uint8_t bad7[7] = {APP_CFG_CAL, 0x04, 0x40, 0x83, 0x33, 0x33, 0x01};
+            ok("길이가 1 + 5n 이 아니면 무시", !app_downlink(&A, APP_CFG_PORT, bad7, 7));
+            boot();
+            ok("다시 켜도 그대로 (a · 목 넣음, b · Re 최소 기본값)", (A.cal.has & 0x0Fu) == 0x09u &&
+                                                                     fabs(A.meter.cfg.throat_d_m - 4.1e-3) < 1e-9 &&
+                                                                     A.meter.cfg.c_re_b == -158.91);
+        }
+        const uint8_t reset[2] = {APP_CFG_CAL, 0x00};
+        ok("05 00 → 모두 기본값", app_downlink(&A, APP_CFG_PORT, reset, 2) && A.cal.has == 0u &&
+                                     A.meter.cfg.throat_d_m == 4.0e-3 && A.meter.cfg.c_re_a == 0.97739);
+        run_ack(60);
+        boot();
+        ok("다시 켜도 기본값", A.cal.has == 0u && A.meter.cfg.throat_d_m == 4.0e-3);
     }
 
     printf("방출 기준(물트랩 압력)을 설정 명령으로 넣기\n");
@@ -989,5 +1156,8 @@ int main(void)
     }
 
     printf("\n%d / %d 통과\n", checks - fails, checks);
+    if (g_vec != NULL) {
+        fclose(g_vec);
+    }
     return fails ? 1 : 0;
 }
