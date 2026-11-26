@@ -972,7 +972,7 @@ static void led_tick(app_t *a, uint32_t now)
     }
 }
 
-/* DS18B20 이 빠지거나(150 s 넘게 값 없음 → 가스 온도가 BMP390 으로) 다시 잡히면 로그 한 줄 (설계서 PCB3_3 5번).
+/* DS18B20 이 빠지거나(150 s 넘게 값 없음 → 가스 온도가 BMP280 으로) 다시 잡히면 로그 한 줄 (설계서 PCB3_3 5번).
  * 켤 때는 main 이 있음 · 없음을 찍으므로, 켠 뒤 처음 정해지는 상태는 조용히 받아 둠.
  * 첫 값은 변환(750 ms) 뒤 다음 읽기에서 나오므로 APP_PROBE_GRACE_S 까지는 "없음"으로 안 봄.
  * PCB3_2(자리 없음)는 늘 없음 → 로그 안 나옴. */
@@ -985,7 +985,7 @@ static void probe_watch(app_t *a, bool ok)
         a->probe_state = 1u;
     } else if (a->probe_state == 1u) {
         a->probe_state = 2u;
-        say(a, "DS18B20: 값 끊김 — 가스 온도를 BMP390(함체 안 온도)으로, 보고 26번 0x8000 · J_TMP 선 확인");
+        say(a, "DS18B20: 값 끊김 — 가스 온도를 BMP280(함체 안 온도)으로, 보고 26번 0x8000 · J_TMP 선 확인");
     } else if (a->probe_state == 0u && a->up_s >= APP_PROBE_GRACE_S) {
         a->probe_state = 2u;
     }

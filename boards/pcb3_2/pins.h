@@ -46,11 +46,11 @@
 #define DBG_RX_PORT      GPIOD
 #define DBG_RX_PIN       GPIO_PIN_9   /* 78번 · USART3_RX — 디버그 헤더 · 3.3 V */  /* AF7 */
 #define BMP_INT_PORT     GPIOG
-#define BMP_INT_PIN      GPIO_PIN_7   /* 92번 · GPIO 입력 · EXTI7 — BMP390 인터럽트 · 3.3 V */
+#define BMP_INT_PIN      GPIO_PIN_7   /* 92번 · GPIO 입력 · EXTI7 — BMP390 인터럽트(U-S3 자리 비어 있음 · 안 씀 — 이 판엔 기압계 없음, BMP280 모듈을 I2C3 에 선으로 달면 펌웨어가 찾음) · 3.3 V */
 #define I2C3_SDA_PORT    GPIOC
-#define I2C3_SDA_PIN     GPIO_PIN_9   /* 99번 · I2C3_SDA — ABP2 · BMP390 · 3.3 V */  /* AF4 */
+#define I2C3_SDA_PIN     GPIO_PIN_9   /* 99번 · I2C3_SDA — ABP2 · (U-S3 빈 자리) · 3.3 V */  /* AF4 */
 #define I2C3_SCL_PORT    GPIOA
-#define I2C3_SCL_PIN     GPIO_PIN_8   /* 100번 · I2C3_SCL — ABP2 · BMP390 · 3.3 V */  /* AF4 */
+#define I2C3_SCL_PIN     GPIO_PIN_8   /* 100번 · I2C3_SCL — ABP2 · (U-S3 빈 자리) · 3.3 V */  /* AF4 */
 #define SWDIO_PORT       GPIOA
 #define SWDIO_PIN        GPIO_PIN_13   /* 105번 · SWDIO · 3.3 V */  /* AF0 */
 #define SWCLK_PORT       GPIOA

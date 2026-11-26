@@ -56,7 +56,7 @@ set(GASMETER_SOURCES
   Core/Src/report.c
   Core/Src/hsc.c
   Core/Src/abp2.c
-  Core/Src/bmp390.c
+  Core/Src/bmp280.c
   Core/Src/sensors.c
   Core/Src/sdp810.c
   Core/Src/ds18b20.c

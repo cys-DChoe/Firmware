@@ -1,4 +1,4 @@
-/* 보드 I2C — I2C2(HSC, PB10/PB12) · I2C3(ABP2 · BMP390, PA8/PC9), 100 kHz, 외부 풀업 4.7 kΩ */
+/* 보드 I2C — I2C2(HSC, PB10/PB12) · I2C3(ABP2 · BMP280 · SDP810, PA8/PC9), 100 kHz, 외부 풀업 4.7 kΩ */
 #pragma once
 
 #include "i2c_bus.h"

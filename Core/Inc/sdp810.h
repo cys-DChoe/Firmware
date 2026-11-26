@@ -1,4 +1,4 @@
-/* Sensirion SDP810-500Pa 차압 — 다음 판(PCB3_3) J_SDP 헤더에 선으로 꽂음, I2C3(ABP2 · BMP390 과 같은 버스) 0x25
+/* Sensirion SDP810-500Pa 차압 — 다음 판(PCB3_3) J_SDP 헤더에 선으로 꽂음, I2C3(ABP2 · BMP280 과 같은 버스) 0x25
  *
  * SDP8xx-Digital 데이터시트 v1.1 (04/2019):
  *   트리거 측정 0x362F (차압 온도 보상 · 클럭 늘림 없음) → 45 ms(40–50) 뒤 9바이트 읽기   6.3.3절
@@ -9,7 +9,7 @@
  *   측정 중엔 읽기 머리에 답하지 않음 — 그래서 묻지 않고 50 ms 기다린 뒤 한 번 읽음
  *     (안 그러면 답 없음이 I2C 실패로 쌓여 버스를 다시 열게 됨, i2c_stm32.c I2C_FAILS_REOPEN)
  *
- * 쓰는 순서 (sensors.c): sdp810_trigger → (ABP2 · HSC · BMP390 읽는 동안) → 50 ms 채움 → sdp810_fetch → sdp810_sleep
+ * 쓰는 순서 (sensors.c): sdp810_trigger → (ABP2 · HSC · BMP280 읽는 동안) → 50 ms 채움 → sdp810_fetch → sdp810_sleep
  * 센서가 없는 판(PCB3_2)에서는 SDP810_RETRY_READS 번 읽을 때마다 한 번만 찾아봄 — 같은 버스의 다른 센서에 영향 없게.
  */
 #pragma once

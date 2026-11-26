@@ -61,8 +61,8 @@ sens_err_t sensors_power_on(sensors_t *s)
     s->powered = true;
     s->bmp_retry_n = 0;
     s->bus_pg->delay_ms(s->bus_pg->ctx, SENSORS_POWER_ON_MS);
-    /* BMP390 은 전원이 꺼지면 설정이 지워지므로 켤 때마다 다시 설정 */
-    const sens_err_t e = bmp390_init(s->bus_pg, &s->bmp);
+    /* 켤 때마다 다시 시작 · 설정 (BMP280 은 3V3 상시지만, 켤 때 실패했던 것 · 주소도 다시 찾음) */
+    const sens_err_t e = bmp280_init(s->bus_pg, &s->bmp);
     s->bmp_ready = (e == SENS_OK);
     return e;
 }
@@ -108,13 +108,13 @@ void sensors_read(sensors_t *s, sensors_result_t *r)
 
     if (!s->bmp_ready && s->powered && ++s->bmp_retry_n >= SENSORS_BMP_RETRY) {
         s->bmp_retry_n = 0;
-        s->bmp_ready = bmp390_init(s->bus_pg, &s->bmp) == SENS_OK;   /* 켤 때 실패했으면 여기서 다시 */
+        s->bmp_ready = bmp280_init(s->bus_pg, &s->bmp) == SENS_OK;   /* 켤 때 실패했으면 여기서 다시 */
         if (s->bmp_ready) {
             s->bmp_reinits++;
         }
     }
-    bmp390_reading_t b = {0};
-    r->e_baro = s->bmp_ready ? bmp390_measure(s->bus_pg, &s->bmp, &b) : SENS_E_BUS;
+    bmp280_reading_t b = {0};
+    r->e_baro = s->bmp_ready ? bmp280_measure(s->bus_pg, &s->bmp, &b) : SENS_E_BUS;
     if (r->e_baro == SENS_OK) {
         r->sample.patm_pa = b.p_pa;
         r->sample.t_gas_c = b.t_c;
@@ -151,7 +151,7 @@ void sensors_read(sensors_t *s, sensors_result_t *r)
         }
     }
 
-    /* DS18B20: 있으면 가스 온도를 이 값으로 (프로브가 가스관에 닿음 — BMP390 은 함체 안 온도) */
+    /* DS18B20: 있으면 가스 온도를 이 값으로 (프로브가 가스관에 닿음 — BMP280 은 함체 안 온도) */
     if (probe_step(s, r)) {
         r->sample.t_probe_ok = true;
         r->sample.t_probe_c = s->probe_t_c;

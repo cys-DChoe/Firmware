@@ -62,7 +62,7 @@ void HAL_I2C_MspInit(I2C_HandleTypeDef *hi2c)
         gpio.Pin = I2C2_SCL_PIN | I2C2_SDA_PIN;
         HAL_GPIO_Init(I2C2_SCL_PORT, &gpio);
     } else if (hi2c->Instance == I2C3) {
-        /* ABP2 정압 · BMP390 기압: PA8 SCL · PC9 SDA */
+        /* ABP2 정압 · BMP280 기압 · SDP810: PA8 SCL · PC9 SDA */
         __HAL_RCC_I2C3_CLK_ENABLE();
         __HAL_RCC_GPIOA_CLK_ENABLE();
         __HAL_RCC_GPIOC_CLK_ENABLE();

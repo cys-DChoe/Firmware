@@ -83,7 +83,7 @@ typedef struct {
     double dp_raw_pa;   /* 차압 센서 값 (영점 빼기 전) */
     double pg_pa;       /* 정압(게이지압) */
     double t_gas_c;     /* 가스 온도 */
-    double patm_pa;     /* 대기압 (BMP390) */
+    double patm_pa;     /* 대기압 (BMP280) */
     bool patm_held;     /* 기압을 못 재서 마지막 값(한 번도 못 쟀으면 해수면 값)을 씀 — 계산은 이 값으로 함 */
     /* 비교 시험용 (다음 판 · 계산에는 안 씀, 1분 보고 24 · 26 번에만): */
     bool dp2_ok;        /* SDP810 값이 있음 */
@@ -200,5 +200,5 @@ double meter_gas_viscosity(const meter_cfg_t *c, double t_k);          /* Pa·s 
 /* 그 차압에서 쓸 C. re_out 에 Re(고정 C 이면 0). 벤치 venturi.py discharge_coef 와 같은 식 */
 double meter_discharge_c(const meter_cfg_t *c, double dp_pa, double rho, double t_k, double *re_out);
 double meter_normal_factor(double p_abs_pa, double t_k);
-double meter_patm_from_altitude(double alt_m);   /* BMP390 이 없을 때 · 시험용 */
+double meter_patm_from_altitude(double alt_m);   /* 기압계가 없을 때 · 시험용 */
 double meter_median(const double *v, uint16_t n);

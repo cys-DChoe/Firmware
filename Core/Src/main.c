@@ -114,8 +114,8 @@ static void hw_set_pg_fs(void *ctx, double pa)
     printf("정압 센서 만점: %.0f Pa\n", pa);
 }
 
-/* 셀이 낮아 쉴 때: 센서 전원 · LED 끔. 다시 켤 때 센서 전원 · BMP390 설정 다시
- * 센서 전원(SENS_EN)은 차압 센서(HSC) 레일만 끔 — 정압(ABP2) · 기압(BMP390)은 3V3 상시라 대기 전류(수십 nA · µA)로 남음
+/* 셀이 낮아 쉴 때: 센서 전원 · LED 끔. 다시 켤 때 센서 전원 · BMP280 설정 다시
+ * 센서 전원(SENS_EN)은 차압 센서(HSC) 레일만 끔 — 정압(ABP2) · 기압(BMP280)은 3V3 상시라 대기 전류(수십 nA · µA)로 남음
  * (LTE 를 넣으면 여기서 먼저 꺼야 함 — 펌웨어 주의 2절, 지금은 켜지 않으므로 없음) */
 static void hw_power_save(void *ctx, bool off)
 {
@@ -261,12 +261,20 @@ int main(void)
 
     wdg_kick();
 
-    /* 2) 센서: I2C2(HSC) · I2C3(ABP2 · BMP390), 전원 켜고 BMP390 설정 */
+    /* 2) 센서: I2C2(HSC) · I2C3(ABP2 · BMP280), 전원 켜고 BMP280 설정 */
     if (i2c_stm32_init(&s_i2c_dp, I2C2) != HAL_OK || i2c_stm32_init(&s_i2c_pg, I2C3) != HAL_OK) {
         Error_Handler();
     }
     sensors_init(&s_sens, &s_i2c_dp.bus, &s_i2c_pg.bus, sens_power);
-    printf("센서 전원: BMP390 %s\n", sensors_power_on(&s_sens) == SENS_OK ? "OK" : "응답 없음");
+    {
+        const sens_err_t e = sensors_power_on(&s_sens);
+        if (e == SENS_OK) {
+            printf("기압계: %s (칩 0x%02X) 주소 0x%02X OK\n", s_sens.bmp.chip_id == BME280_CHIP_ID ? "BME280" : "BMP280",
+                   s_sens.bmp.chip_id, s_sens.bmp.addr);
+        } else {
+            printf("기압계: BMP280 %s — J_BME 모듈 확인 (1분마다 다시 찾음)\n", e == SENS_E_ID ? "다른 칩이 답함" : "응답 없음");
+        }
+    }
     /* PCB3_3 센서: SDP810(I2C3 0x25) · DS18B20(PB13) — 판에 자리가 없으면(board.h) 안 건드림, 보고 24 · 26 번은 0x8000 */
     s_sens.sdp_off = !BOARD_HAS_SDP810;
 #if BOARD_HAS_DS18B20

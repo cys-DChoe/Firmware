@@ -1,14 +1,14 @@
 /* 센서 드라이버 맥 시험 — 가짜 I2C 버스에 데이터시트대로 답하는 가짜 센서를 붙여 확인
  *   HSC: 데이터시트 Table 7 (10 % = 1638, 50 % = 8192, 90 % = 14746) · 온도 식
  *   ABP2: Table 6 (10 % = 1677722, 90 % = 15099494) · 온도 예제(6291456 → 25 °C) · 상태 바이트
- *   BMP390: Bosch BMP3_SensorAPI(db4cf8e) 실수 보정 코드로 낸 기준값과 대조
+ *   BMP280: Bosch BME280_SensorAPI(c90d419) 실수 보정 코드(온도 · 기압 부분 = BMP280 데이터시트 8.1)로 낸 기준값과 대조
  */
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include "abp2.h"
 #include "ds18b20.h"
-#include "bmp390.h"
+#include "bmp280.h"
 #include "hsc.h"
 #include "i2c_timing.h"
 #include "sensors.h"
@@ -46,13 +46,19 @@ typedef struct {
     int abp2_busy_left;
     uint8_t abp2_last_cmd[3];
     int abp2_cmds;
-    /* BMP390 (I2C3, 0x76) */
-    uint8_t bmp[128];
+    /* BMP280 (I2C3, 0x76 — bmp_addr 로 바꿈) */
+    uint8_t bmp[256];
+    uint8_t bmp_addr;               /* 0 이면 0x76 */
     bool bmp_dead;
-    uint8_t bmp_status_after_measure;
-    int bmp_pwr_writes;
+    uint8_t bmp_status_after_measure;   /* 강제 모드 명령 뒤 0xF3 값 (0 = 끝남) */
+    int bmp_ctrl_writes, bmp_resets;
     uint32_t delay_total;
 } fake_t;
+
+static bool bmp_here(const fake_t *f, uint8_t addr)
+{
+    return !f->bmp_dead && addr == (f->bmp_addr != 0u ? f->bmp_addr : BMP280_ADDR_LO);
+}
 
 static int fk_write(void *ctx, uint8_t addr, const uint8_t *d, size_t n)
 {
@@ -63,11 +69,14 @@ static int fk_write(void *ctx, uint8_t addr, const uint8_t *d, size_t n)
         f->abp2_busy_left = f->abp2_busy_reads;
         return 0;
     }
-    if (addr == BMP390_ADDR && !f->bmp_dead && n == 2) {
+    if (bmp_here(f, addr) && n == 2) {
         f->bmp[d[0]] = d[1];
-        if (d[0] == 0x1B) {
-            f->bmp_pwr_writes++;
-            f->bmp[0x03] = f->bmp_status_after_measure;
+        if (d[0] == 0xF4) {
+            f->bmp_ctrl_writes++;
+            f->bmp[0xF3] = f->bmp_status_after_measure;
+        }
+        if (d[0] == 0xE0 && d[1] == 0xB6) {
+            f->bmp_resets++;
         }
         return 0;
     }
@@ -101,7 +110,7 @@ static int fk_read_pg(void *ctx, uint8_t addr, uint8_t *d, size_t n)
 static int fk_write_read(void *ctx, uint8_t addr, const uint8_t *w, size_t wn, uint8_t *r, size_t rn)
 {
     fake_t *f = ctx;
-    if (addr != BMP390_ADDR || f->bmp_dead || wn != 1 || w[0] + rn > sizeof(f->bmp)) {
+    if (!bmp_here(f, addr) || wn != 1 || w[0] + rn > sizeof(f->bmp)) {
         return -1;
     }
     memcpy(r, &f->bmp[w[0]], rn);
@@ -110,11 +119,16 @@ static int fk_write_read(void *ctx, uint8_t addr, const uint8_t *w, size_t wn, u
 
 static void fk_delay(void *ctx, uint32_t ms) { ((fake_t *)ctx)->delay_total += ms; }
 
-/* Bosch 기준값을 만든 보정값 세트 A · B (scratch 의 gold.c 와 같음) */
-static const uint8_t CAL_A[21] = {0x67, 0x6B, 0xB2, 0x4A, 0xF9, 0x48, 0x21, 0xAC, 0x3F, 0x0A, 0xFE,
-                                  0x20, 0x4E, 0x30, 0x75, 0x03, 0xFA, 0xDC, 0x05, 0x07, 0xC4};
-static const uint8_t CAL_B[21] = {0x10, 0x80, 0x00, 0x40, 0x80, 0xFF, 0xFF, 0x00, 0x80, 0x81, 0x7F,
-                                  0xFF, 0xFF, 0x00, 0x00, 0x80, 0x7F, 0x00, 0x80, 0x80, 0x7F};
+/* Bosch 기준값을 만든 보정값 세트 A · B (scratch bmp280/gen/gold.c 와 같음)
+ * A = 널리 쓰이는 BMP280 예제 값 dig_T1 27504 · T2 26435 · T3 −1000 · P1 36477 · P2 −10685 · P3 3024 · P4 2855 ·
+ *     P5 140 · P6 −7 · P7 15500 · P8 −14600 · P9 6000 (원값 415148 · 519888 → 100,653.26 Pa · 25.08 °C)
+ * B = 다른 칩처럼 바꾼 세트 */
+static const uint8_t CAL_A[24] = {0x70, 0x6B, 0x43, 0x67, 0x18, 0xFC, 0x7D, 0x8E, 0x43, 0xD6, 0xD0, 0x0B,
+                                  0x27, 0x0B, 0x8C, 0x00, 0xF9, 0xFF, 0x8C, 0x3C, 0xF8, 0xC6, 0x70, 0x17};
+static const uint8_t CAL_B[24] = {0x69, 0x6D, 0xF4, 0x65, 0x32, 0x00, 0x7C, 0x92, 0x98, 0xD6, 0xD0, 0x0B,
+                                  0x94, 0x11, 0x6A, 0xFF, 0xF9, 0xFF, 0xAC, 0x26, 0x0A, 0xD8, 0xBD, 0x10};
+#define BMP_P_PA  100653.258145     /* 세트 A · 원값 415148 · 519888 의 Bosch 값 */
+#define BMP_T_C   25.082478
 
 static void hsc_bytes(uint8_t b[4], uint8_t st, uint16_t p, uint16_t t)
 {
@@ -131,10 +145,20 @@ static void abp2_bytes(uint8_t b[7], uint8_t st, uint32_t p, uint32_t t)
     b[4] = (uint8_t)(t >> 16); b[5] = (uint8_t)(t >> 8); b[6] = (uint8_t)t;
 }
 
+/* 0xF7–0xFC: 20비트 원값, 위 바이트 먼저 · xlsb 는 [7:4] */
 static void bmp_raw(fake_t *f, uint32_t p, uint32_t t)
 {
-    f->bmp[0x04] = (uint8_t)p; f->bmp[0x05] = (uint8_t)(p >> 8); f->bmp[0x06] = (uint8_t)(p >> 16);
-    f->bmp[0x07] = (uint8_t)t; f->bmp[0x08] = (uint8_t)(t >> 8); f->bmp[0x09] = (uint8_t)(t >> 16);
+    f->bmp[0xF7] = (uint8_t)(p >> 12); f->bmp[0xF8] = (uint8_t)(p >> 4); f->bmp[0xF9] = (uint8_t)((p & 0xFu) << 4);
+    f->bmp[0xFA] = (uint8_t)(t >> 12); f->bmp[0xFB] = (uint8_t)(t >> 4); f->bmp[0xFC] = (uint8_t)((t & 0xFu) << 4);
+}
+
+/* 칩 0x58 · 세트 A · 원값 415148 · 519888 */
+static void bmp_setup(fake_t *f)
+{
+    f->bmp[0xD0] = 0x58;
+    memcpy(&f->bmp[0x88], CAL_A, 24);
+    f->bmp_status_after_measure = 0x00;
+    bmp_raw(f, 415148u, 519888u);
 }
 
 /* ---------- 시험 ---------- */
@@ -213,76 +237,109 @@ static void test_abp2(void)
 
 typedef struct {
     char set;
-    uint32_t p_raw, t_raw;
+    int32_t p_raw, t_raw;
     double p_pa, t_c;
     int clipped;
 } gold_t;
 
-/* Bosch BMP3_SensorAPI compensate_temperature · compensate_pressure (BMP3_FLOAT_COMPENSATION) 결과 */
+/* Bosch BME280_SensorAPI(c90d419) bme280_compensate_data(BME280_PRESS | BME280_TEMP) 실수 결과 */
 static const gold_t GOLD[] = {
-    {'A', 6600000u, 8400000u, 121621.883102, 24.196611, 0},
-    {'A', 6800000u, 8200000u, 118426.640495, 20.647408, 0},
-    {'A', 6400000u, 8700000u, 125000.000000, 29.516686, 1},
-    {'A', 6600000u, 7038720u, 110266.592799, 0.000000, 0},
-    {'A', 100u, 100u, 125000.000000, -40.000000, 1},
-    {'A', 16777215u, 16777215u, 68316.145653, 85.000000, 1},
-    {'A', 7400000u, 8400000u, 115494.987908, 24.196611, 0},
-    {'A', 8200000u, 8400000u, 109329.471062, 24.196611, 0},
-    {'A', 9000000u, 8400000u, 103120.336648, 24.196611, 0},
-    {'A', 8600000u, 8100000u, 103727.171933, 18.872060, 0},
-    {'B', 5000000u, 8000000u, 125000.000000, -6.062317, 1},
-    {'B', 9000000u, 8500000u, 125000.000000, 1.631972, 1},
-    {'B', 2000000u, 7000000u, 125000.000000, -22.133016, 1},
-    {'B', 1000000u, 8300000u, 125000.000000, -1.418459, 1},
+    {'A', 415148, 519888, 100653.258145, 25.082478, 0},
+    {'A', 330000, 519888, 110000.000000, 25.082478, 1},
+    {'A', 380000, 500000, 105706.073695, 18.846777, 0},
+    {'A', 450000, 540000, 95552.131529, 31.379266, 0},
+    {'A', 300000, 480000, 110000.000000, 12.566890, 1},
+    {'A', 560000, 519888, 75756.632349, 25.082478, 0},
+    {'A', 100000, 519888, 110000.000000, 25.082478, 1},
+    {'A', 415148, 0, 77126.364219, -40.000000, 1},
+    {'A', 415148, 1048575, 110000.000000, 85.000000, 1},
+    {'A', 1048575, 519888, 30000.000000, 25.082478, 1},
+    {'B', 415148, 519888, 93038.776769, 22.325085, 0},
+    {'B', 350000, 505000, 103103.031763, 17.691800, 0},
+    {'B', 470000, 530000, 84356.411988, 25.472177, 0},
+    {'B', 520000, 460000, 73250.599189, 3.688911, 0},
 };
 
-static void test_bmp390(void)
+static void test_bmp280(void)
 {
-    printf("BMP390 보정식 — Bosch 공식 코드 기준값 %zu개와 대조\n", sizeof(GOLD) / sizeof(GOLD[0]));
-    bmp390_calib_t ca, cb;
-    bmp390_parse_calib(CAL_A, &ca);
-    bmp390_parse_calib(CAL_B, &cb);
+    printf("BMP280 보정식 — Bosch 공식 코드 기준값 %zu개와 대조\n", sizeof(GOLD) / sizeof(GOLD[0]));
+    bmp280_calib_t ca, cb;
+    bmp280_parse_calib(CAL_A, &ca);
+    bmp280_parse_calib(CAL_B, &cb);
+    ok("보정값 읽기: T1 27504 · T3 −1000 · P1 36477 · P6 −7 · P9 6000 (표 17, 아래 바이트 먼저)",
+       ca.t1 == 27504u && ca.t2 == 26435 && ca.t3 == -1000 && ca.p1 == 36477u && ca.p2 == -10685 && ca.p6 == -7 &&
+       ca.p8 == -14600 && ca.p9 == 6000);
     double worst_p = 0, worst_t = 0;
     int flag_ok = 1;
     for (size_t i = 0; i < sizeof(GOLD) / sizeof(GOLD[0]); i++) {
         const gold_t *g = &GOLD[i];
         double p, t;
-        const sens_err_t e = bmp390_compensate(g->set == 'A' ? &ca : &cb, g->p_raw, g->t_raw, &p, &t);
+        const sens_err_t e = bmp280_compensate(g->set == 'A' ? &ca : &cb, g->p_raw, g->t_raw, &p, &t);
         worst_p = fmax(worst_p, fabs(p - g->p_pa));
         worst_t = fmax(worst_t, fabs(t - g->t_c));
         if ((e == SENS_E_RANGE) != (g->clipped != 0)) {
             flag_ok = 0;
         }
     }
-    /* Bosch 코드는 거듭제곱을 float 로 계산해서 아주 작게 다를 수 있음 */
-    near("기압 최대 차이 Pa", worst_p, 0.0, 0.05);
-    near("온도 최대 차이 °C", worst_t, 0.0, 1e-5);
-    ok("범위 밖 판정이 Bosch 와 같음", flag_ok);
-    ok("변환 시간 ×4 · ×1 = 10,889 µs", bmp390_conv_time_us(2, 0) == 10889u);
+    near("기압 최대 차이 Pa", worst_p, 0.0, 1e-5);
+    near("온도 최대 차이 °C", worst_t, 0.0, 1e-6);
+    ok("범위 밖 판정(−40…85 °C · 300…1100 hPa)이 Bosch 와 같음", flag_ok);
+    bmp280_calib_t cz = ca;
+    cz.p1 = 0;
+    double pz, tz;
+    ok("P1 = 0 → 0 으로 안 나누고 끝값 · 범위 밖", bmp280_compensate(&cz, 415148, 519888, &pz, &tz) == SENS_E_RANGE &&
+                                                      pz == 30000.0);
 
-    printf("BMP390 시작 · 측정 순서\n");
+    printf("BMP280 시작 · 측정 순서\n");
     fake_t f;
     memset(&f, 0, sizeof(f));
-    f.bmp[0x00] = 0x60;
-    memcpy(&f.bmp[0x31], CAL_A, 21);
-    f.bmp_status_after_measure = 0x70;
-    bmp_raw(&f, 9000000u, 8400000u);
+    bmp_setup(&f);
+    f.bmp[0xF5] = 0xFF;
     i2c_bus_t bus = {fk_write, fk_read_pg, fk_write_read, fk_delay, &f};
-    bmp390_t dev;
-    ok("칩 0x60 → 시작 OK", bmp390_init(&bus, &dev) == SENS_OK);
-    ok("다시 시작 명령 0xB6", f.bmp[0x7E] == 0xB6);
-    ok("OSR = 기압 ×4 · 온도 ×1 (0x02)", f.bmp[0x1C] == 0x02);
-    ok("IIR 끔 (0x00)", f.bmp[0x1F] == 0x00);
-    bmp390_reading_t r;
-    ok("한 번 재기 OK", bmp390_measure(&bus, &dev, &r) == SENS_OK);
-    ok("강제 모드 명령 0x13", f.bmp[0x1B] == 0x13);
-    ok("원값을 아래 바이트 먼저로 읽음", r.p_raw == 9000000u && r.t_raw == 8400000u);
-    near("기압 = Bosch 값", r.p_pa, 103120.336648, 0.05);
-    near("온도 = Bosch 값", r.t_c, 24.196611, 1e-5);
-    f.bmp[0x00] = 0x50;                 /* BMP388 */
-    ok("다른 칩(0x50) → 칩 번호 오류", bmp390_init(&bus, &dev) == SENS_E_ID);
+    bmp280_t dev;
+    ok("0x76 칩 0x58 → 시작 OK", bmp280_init(&bus, &dev) == SENS_OK && dev.addr == 0x76 && dev.chip_id == 0x58);
+    ok("다시 시작 명령 0xE0 ← 0xB6 한 번", f.bmp_resets == 1);
+    ok("IIR 끔 (0xF5 = 0x00)", f.bmp[0xF5] == 0x00);
+    ok("보정값 읽음", dev.cal.t1 == 27504u && dev.cal.p9 == 6000);
+    bmp280_reading_t r;
+    uint32_t d0 = f.delay_total;
+    ok("한 번 재기 OK", bmp280_measure(&bus, &dev, &r) == SENS_OK);
+    ok("강제 모드 명령 0xF4 = 0x2D (온도 ×1 · 기압 ×4 · 강제)", f.bmp[0xF4] == 0x2D && f.bmp_ctrl_writes == 1);
+    ok("최대 측정 시간 14 ms 를 기다림 (표 13: 13.3 ms)", f.delay_total - d0 == BMP280_MEAS_MAX_MS);
+    ok("20비트 원값을 위 바이트 먼저로 읽음", r.p_raw == 415148 && r.t_raw == 519888);
+    near("기압 = Bosch 값", r.p_pa, BMP_P_PA, 1e-5);
+    near("온도 = Bosch 값", r.t_c, BMP_T_C, 1e-6);
+
+    f.bmp_status_after_measure = 0x08;                  /* measuring 이 안 내려감 */
+    ok("측정이 안 끝나면 busy", bmp280_measure(&bus, &dev, &r) == SENS_E_BUSY);
+    f.bmp_status_after_measure = 0x00;
+    bmp_raw(&f, 0x80000u, 519888u);
+    ok("건너뛴 칸(0x80000) → busy", bmp280_measure(&bus, &dev, &r) == SENS_E_BUSY);
+    bmp_raw(&f, 415148u, 519888u);
+    f.bmp[0xF3] = 0x01;                                 /* 보정값 옮기는 중이 안 끝남 */
+    f.bmp_status_after_measure = 0x01;
+    f.bmp_ctrl_writes = 0;
+    ok("다시 시작 뒤 im_update 가 안 내려가면 busy", bmp280_init(&bus, &dev) == SENS_E_BUSY);
+    f.bmp[0xF3] = 0x00;
+    f.bmp_status_after_measure = 0x00;
+
+    f.bmp_addr = 0x77;
+    ok("0x77 모듈(SDO = 3V3)도 찾음", bmp280_init(&bus, &dev) == SENS_OK && dev.addr == 0x77);
+    ok("0x77 에서 재기 OK", bmp280_measure(&bus, &dev, &r) == SENS_OK && fabs(r.p_pa - BMP_P_PA) < 1e-5);
+    f.bmp_addr = 0;
+    f.bmp[0xD0] = 0x60;
+    ok("BME280 모듈(칩 0x60)도 받음", bmp280_init(&bus, &dev) == SENS_OK && dev.chip_id == 0x60);
+    f.bmp[0xD0] = 0x56;
+    ok("BMP280 시제품 칩(0x56)도 받음", bmp280_init(&bus, &dev) == SENS_OK);
+    f.bmp[0xD0] = 0x00;                                 /* BMP280 은 0xD0 이 칩 번호가 아님 */
+    ok("다른 칩 → 칩 번호 오류 · 주소 없음", bmp280_init(&bus, &dev) == SENS_E_ID && dev.addr == 0u);
+    ok("주소 없이 재기 → 버스 오류 (버스 안 건드림)", bmp280_measure(&bus, &dev, &r) == SENS_E_BUS);
+    f.bmp[0xD0] = 0x58;
+    memset(&f.bmp[0x88], 0, 24);
+    ok("보정값이 0 → 상태 오류", bmp280_init(&bus, &dev) == SENS_E_STATUS);
+    memcpy(&f.bmp[0x88], CAL_A, 24);
     f.bmp_dead = true;
-    ok("응답 없음 → 버스 오류", bmp390_init(&bus, &dev) == SENS_E_BUS);
+    ok("응답 없음(두 주소 다) → 버스 오류", bmp280_init(&bus, &dev) == SENS_E_BUS);
 }
 
 static bool power_state;
@@ -295,29 +352,26 @@ static void test_sensors_read(void)
     memset(&f, 0, sizeof(f));
     hsc_bytes(f.hsc, 0, (uint16_t)(8192 + 32.4 * 13108.0 / 2000.0 + 0.5), 768);   /* 약 32.4 Pa */
     abp2_bytes(f.abp2, 0x40, 1677722 + (15099494 - 1677722) / 20, 6291456);       /* 300 Pa · 25 °C */
-    f.bmp[0x00] = 0x60;
-    memcpy(&f.bmp[0x31], CAL_A, 21);
-    f.bmp_status_after_measure = 0x70;
-    bmp_raw(&f, 9000000u, 8400000u);
+    bmp_setup(&f);
     i2c_bus_t dp = {fk_write, fk_read_dp, fk_write_read, fk_delay, &f};
     i2c_bus_t pg = {fk_write, fk_read_pg, fk_write_read, fk_delay, &f};
     sensors_t s;
     sensors_init(&s, &dp, &pg, fake_power);
-    ok("전원 켜고 BMP390 설정 OK", sensors_power_on(&s) == SENS_OK && power_state);
+    ok("전원 켜고 BMP280 설정 OK", sensors_power_on(&s) == SENS_OK && power_state);
     sensors_result_t r;
     sensors_read(&s, &r);
     ok("셋 다 OK · 계산에 넣어도 됨", r.e_dp == SENS_OK && r.e_pg == SENS_OK && r.e_baro == SENS_OK && r.usable);
     near("차압 Pa", r.sample.dp_raw_pa, 32.4, 0.1);
     near("정압 Pa", r.sample.pg_pa, 300.0, 0.001);
-    near("대기압 Pa (BMP390)", r.sample.patm_pa, 103120.336648, 0.05);
-    near("가스 온도 °C (BMP390)", r.sample.t_gas_c, 24.196611, 1e-5);
+    near("대기압 Pa (BMP280)", r.sample.patm_pa, BMP_P_PA, 0.05);
+    near("가스 온도 °C (BMP280)", r.sample.t_gas_c, BMP_T_C, 1e-5);
     ok("기압을 쟀으니 '못 잼' 표시 없음", !r.sample.patm_held);
 
     printf("기압 센서가 죽으면 마지막 기압 · 정압 센서 온도로 대신\n");
     f.bmp_dead = true;
     sensors_read(&s, &r);
     ok("기압 오류로 남고 계산은 계속", r.e_baro == SENS_E_BUS && r.usable);
-    near("마지막 기압 사용", r.sample.patm_pa, 103120.336648, 0.05);
+    near("마지막 기압 사용", r.sample.patm_pa, BMP_P_PA, 0.05);
     near("온도는 ABP2 것", r.sample.t_gas_c, 25.0, 1e-5);
     ok("'기압 못 잼' 표시", r.sample.patm_held);
 
@@ -345,7 +399,7 @@ static void test_sensors_read(void)
     f.bmp_dead = true;
     sensors_t s2;
     sensors_init(&s2, &dp, &pg, fake_power);
-    ok("켤 때 BMP390 응답 없음", sensors_power_on(&s2) == SENS_E_BUS && !s2.bmp_ready);
+    ok("켤 때 BMP280 응답 없음", sensors_power_on(&s2) == SENS_E_BUS && !s2.bmp_ready);
     sensors_read(&s2, &r);
     ok("해수면 값으로 계산하되 '못 잼' 표시", r.e_baro == SENS_E_BUS && r.usable && r.sample.patm_held &&
                                                 r.sample.patm_pa == 101325.0);
@@ -357,7 +411,7 @@ static void test_sensors_read(void)
     }
     ok("살아나면 6번째 읽기에 다시 설정 · 실제 기압", r.e_baro == SENS_OK && n == (int)SENSORS_BMP_RETRY &&
                                                          !r.sample.patm_held && s2.bmp_reinits == 1u);
-    near("다시 설정 뒤 기압 = Bosch 값", r.sample.patm_pa, 103120.336648, 0.05);
+    near("다시 설정 뒤 기압 = Bosch 값", r.sample.patm_pa, BMP_P_PA, 0.05);
 
     sensors_power_off(&s);
     ok("전원 끔", !power_state && !s.powered);
@@ -567,10 +621,7 @@ static void test_next_board_sensors(void)
     fake_t *f = &x.f;
     hsc_bytes(f->hsc, 0, (uint16_t)(8192 + 32.4 * 13108.0 / 2000.0 + 0.5), 768);
     abp2_bytes(f->abp2, 0x40, 1677722 + (15099494 - 1677722) / 20, 6291456);
-    f->bmp[0x00] = 0x60;
-    memcpy(&f->bmp[0x31], CAL_A, 21);
-    f->bmp_status_after_measure = 0x70;
-    bmp_raw(f, 9000000u, 8400000u);
+    bmp_setup(f);
     x.sdp_present = true;
     x.sdp_asleep = true;                         /* 지난 읽기 뒤 잠든 상태로 시작 */
     x.sdp_raw = 1912;                            /* 1912 ÷ 60 = 31.87 Pa */
@@ -607,14 +658,14 @@ static void test_next_board_sensors(void)
     ok("읽은 뒤 다시 잠 (잠 명령 1번)", x.sdp_asleep && x.sdp_sleeps == 1);
     ok("버스 실패가 이어져도 1번 (다시 열기 문턱 3 안)", x.max_consec <= 1);
     ok("읽기 한 번 시간 ≤ 60 ms (SDP 50 ms 를 다른 센서와 겹쳐 씀)", f->delay_total - d0 <= 60u);
-    ok("DS18B20: 처음엔 변환만 시작 · 가스 온도는 BMP390", r.e_probe == SENS_E_BUS && !r.sample.t_probe_ok &&
-                                                                o.converts == 1 && fabs(r.sample.t_gas_c - 24.196611) < 1e-5);
+    ok("DS18B20: 처음엔 변환만 시작 · 가스 온도는 BMP280", r.e_probe == SENS_E_BUS && !r.sample.t_probe_ok &&
+                                                                o.converts == 1 && fabs(r.sample.t_gas_c - BMP_T_C) < 1e-5);
 
     g_wall = 1000;
     sensors_read(&s, &r);
     ok("1 초 뒤: DS18B20 읽음 · 가스 온도 = 프로브", r.e_probe == SENS_OK && r.sample.t_probe_ok &&
                                                        r.sample.t_gas_c == 21.4375 && r.sample.t_probe_c == 21.4375);
-    near("함체 안 온도(BMP390)는 따로 남음", r.t_board_c, 24.196611, 1e-5);
+    near("함체 안 온도(BMP280)는 따로 남음", r.t_board_c, BMP_T_C, 1e-5);
     ok("SDP810 두 번째도 OK (깨우기 2번째)", r.e_sdp == SENS_OK && x.sdp_wake_nacks == 2 && x.max_consec <= 1);
 
     g_wall = 2000;
@@ -627,7 +678,7 @@ static void test_next_board_sensors(void)
     sensors_read(&s, &r);
     ok("60 초: 다시 변환 시작", o.converts == 2);
 
-    printf("DS18B20 을 빼면 마지막 값에서 150 초 뒤 가스 온도를 BMP390 으로 되돌림\n");
+    printf("DS18B20 을 빼면 마지막 값에서 150 초 뒤 가스 온도를 BMP280 으로 되돌림\n");
     o.present = false;
     for (g_wall = 61000; g_wall <= 151000; g_wall += 1000) {
         sensors_read(&s, &r);
@@ -635,7 +686,7 @@ static void test_next_board_sensors(void)
     ok("마지막 정상값(1 초)에서 150 초까지는 그 값", r.sample.t_probe_ok && r.sample.t_gas_c == 21.4375);
     g_wall = 152000;
     sensors_read(&s, &r);
-    ok("넘으면 프로브 없음 · 가스 온도 BMP390", !r.sample.t_probe_ok && fabs(r.sample.t_gas_c - 24.196611) < 1e-5);
+    ok("넘으면 프로브 없음 · 가스 온도 BMP280", !r.sample.t_probe_ok && fabs(r.sample.t_gas_c - BMP_T_C) < 1e-5);
 
     printf("SDP810 읽기만 한 번 실패해도 잠 명령은 보냄 (점7)\n");
     {
@@ -660,7 +711,7 @@ static void test_next_board_sensors(void)
     ok("오류 · 값 없음 · 잠 명령 보냄", r.e_sdp == SENS_E_STATUS && !r.sample.dp2_ok && x.sdp_sleeps == sl + 1);
     x.sdp_corrupt = false;
 
-    printf("SDP810 이 없는 판: 60 번 읽을 때마다 한 번만 찾고, 같은 버스의 ABP2 · BMP390 은 그대로\n");
+    printf("SDP810 이 없는 판: 60 번 읽을 때마다 한 번만 찾고, 같은 버스의 ABP2 · BMP280 은 그대로\n");
     x.sdp_present = false;
     x.max_consec = 0;
     sensors_read(&s, &r);
@@ -672,7 +723,7 @@ static void test_next_board_sensors(void)
         pg_ok = pg_ok && r.e_pg == SENS_OK && r.e_baro == SENS_OK;
     }
     ok("다음 60 번 동안 0x25 를 안 건드림", x.sdp_traffic == tr);
-    ok("그동안 ABP2 · BMP390 은 늘 OK · 실패 이어짐 2번 넘지 않음", pg_ok && x.max_consec <= 2);
+    ok("그동안 ABP2 · BMP280 은 늘 OK · 실패 이어짐 2번 넘지 않음", pg_ok && x.max_consec <= 2);
     sensors_read(&s, &r);
     ok("61 번째에 다시 찾아봄", x.sdp_traffic == tr + 2);
     x.sdp_present = true;
@@ -697,7 +748,7 @@ static void test_next_board_sensors(void)
         sensors_read(&s, &r);
         pg_ok = pg_ok && r.e_pg == SENS_OK && r.e_baro == SENS_OK && r.e_sdp == SENS_E_BUS && !r.sample.dp2_ok;
     }
-    ok("0x25 를 한 번도 안 건드림 · 차압 2 없음 · ABP2 · BMP390 그대로", x.sdp_traffic == tr2 && pg_ok);
+    ok("0x25 를 한 번도 안 건드림 · 차압 2 없음 · ABP2 · BMP280 그대로", x.sdp_traffic == tr2 && pg_ok);
     {
         /* 켠 뒤 기압을 아직 한 번도 못 잼 → 대기압 보정을 못 해서 SDP810 값은 안 씀 (해수면 값으로 보정하면 틀림) */
         sensors_t s3;
@@ -726,7 +777,7 @@ int main(void)
 {
     test_hsc();
     test_abp2();
-    test_bmp390();
+    test_bmp280();
     test_sensors_read();
     test_ds18b20();
     test_next_board_sensors();

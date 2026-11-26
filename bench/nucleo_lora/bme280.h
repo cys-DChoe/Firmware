@@ -1,6 +1,6 @@
 /* Bosch BME280 기압 · 온도 (브레드보드 모듈, I2C4 0x76) — 습도는 안 씀
  * 데이터시트 BST-BME280-DS002: 칩 ID 0xD0 = 0x60 · 보정값 0x88–0x9F · 강제 모드 한 번 재기 · 4.2.3 실수 보정식
- * 새 PCB 는 BMP390(Core/Src/bmp390.c) 이고, 이건 Nucleo 벤치 전용.
+ * 보드 펌웨어는 Core/Src/bmp280.c(BMP280 · BME280 둘 다 받음), 이건 Nucleo 벤치 전용.
  */
 #pragma once
 

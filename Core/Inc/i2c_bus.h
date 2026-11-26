@@ -8,7 +8,7 @@ typedef struct i2c_bus {
     /* 0 = 성공, 음수 = 실패 (응답 없음 · 타임아웃) */
     int (*write)(void *ctx, uint8_t addr7, const uint8_t *data, size_t len);
     int (*read)(void *ctx, uint8_t addr7, uint8_t *data, size_t len);
-    /* 레지스터 주소를 쓰고 이어서 읽기 (BMP390) */
+    /* 레지스터 주소를 쓰고 이어서 읽기 (BMP280) */
     int (*write_read)(void *ctx, uint8_t addr7, const uint8_t *w, size_t wlen, uint8_t *r, size_t rlen);
     void (*delay_ms)(void *ctx, uint32_t ms);
     void *ctx;
